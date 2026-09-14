@@ -3,8 +3,10 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"steamcli.local/steam/internal/community"
@@ -168,7 +170,7 @@ func workshopCommand(o *options) *cobra.Command {
 				return errors.New("no items to subscribe to; pass ITEMIDs or use --from-collection, --from-favorites, or --from-installed")
 			}
 			results := wc.Subscribe(cmd.Context(), appID, items)
-			if err := o.print(cmd, summarize(results)); err != nil {
+			if err := o.emit(cmd, summarize(results), renderBatch(results)); err != nil {
 				return err
 			}
 			return batchErr(results)
@@ -203,7 +205,7 @@ func workshopCommand(o *options) *cobra.Command {
 				return errors.New("no items to unsubscribe from; pass ITEMIDs or use --from-collection or --all")
 			}
 			results := wc.Unsubscribe(cmd.Context(), appID, items)
-			if err := o.print(cmd, summarize(results)); err != nil {
+			if err := o.emit(cmd, summarize(results), renderBatch(results)); err != nil {
 				return err
 			}
 			return batchErr(results)
@@ -228,7 +230,7 @@ func workshopCommand(o *options) *cobra.Command {
 				return err
 			}
 			if !withItemDetails || len(coll.Children) == 0 {
-				return o.print(cmd, coll)
+				return o.emit(cmd, coll, func(w io.Writer) { renderCollection(w, coll, nil) })
 			}
 			childIDs := make([]string, len(coll.Children))
 			for i, ch := range coll.Children {
@@ -238,7 +240,8 @@ func workshopCommand(o *options) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("fetch item details (use --items=false to skip): %w", err)
 			}
-			return o.print(cmd, map[string]any{"collection": coll, "items": details})
+			return o.emit(cmd, map[string]any{"collection": coll, "items": details},
+				func(w io.Writer) { renderCollection(w, coll, details) })
 		},
 	}
 	collection.Flags().BoolVar(&withItemDetails, "items", true, "Fetch full metadata for all items in the collection")
@@ -265,14 +268,31 @@ func workshopCommand(o *options) *cobra.Command {
 					return err
 				}
 				out := map[string]any{"appid": appID, "total": len(ids), "items": ids}
+				var details map[string]workshop.PublishedFileDetails
 				if listDetails && len(ids) > 0 {
-					details, err := wc.GetDetails(cmd.Context(), ids)
+					details, err = wc.GetDetails(cmd.Context(), ids)
 					if err != nil {
 						return fmt.Errorf("fetch item details: %w", err)
 					}
 					out["details"] = details
 				}
-				return o.print(cmd, out)
+				return o.emit(cmd, out, func(w io.Writer) {
+					t := tw(w)
+					if details != nil {
+						fmt.Fprintln(t, "ID\tTITLE\tUPDATED")
+						for _, id := range ids {
+							d := details[id]
+							fmt.Fprintf(t, "%s\t%s\t%s\n", id, truncate(d.Title, 56), unixDate(d.TimeUpdated))
+						}
+					} else {
+						fmt.Fprintln(t, "ID")
+						for _, id := range ids {
+							fmt.Fprintf(t, "%s\n", id)
+						}
+					}
+					t.Flush()
+					fmt.Fprintf(w, "\n%d item(s) for AppID %d.\n", len(ids), appID)
+				})
 			},
 		}
 		c.Flags().BoolVar(&listDetails, "details", false, "Fetch title and metadata for each item")
@@ -317,7 +337,14 @@ func workshopCommand(o *options) *cobra.Command {
 				return err
 			}
 			if !installedDetails {
-				return o.print(cmd, apps)
+				return o.emit(cmd, apps, func(w io.Writer) {
+					t := tw(w)
+					fmt.Fprintln(t, "APPID\tITEMS")
+					for _, a := range apps {
+						fmt.Fprintf(t, "%s\t%d\n", a.AppID, a.Total)
+					}
+					t.Flush()
+				})
 			}
 			wc, err := workshopClient()
 			if err != nil {
@@ -331,7 +358,16 @@ func workshopCommand(o *options) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("fetch item details (omit --details to skip): %w", err)
 			}
-			return o.print(cmd, map[string]any{"apps": apps, "items": details})
+			return o.emit(cmd, map[string]any{"apps": apps, "items": details}, func(w io.Writer) {
+				t := tw(w)
+				fmt.Fprintln(t, "APPID\tITEM\tTITLE")
+				for _, a := range apps {
+					for _, id := range a.Items {
+						fmt.Fprintf(t, "%s\t%s\t%s\n", a.AppID, id, truncate(details[id].Title, 56))
+					}
+				}
+				t.Flush()
+			})
 		},
 	}
 	installedCmd.Flags().BoolVar(&installedDetails, "details", false, "Fetch title and metadata for installed items")
@@ -382,10 +418,20 @@ func workshopCommand(o *options) *cobra.Command {
 				if collectionsOnly {
 					key = "collections"
 				}
-				return o.print(cmd, map[string]any{
+				return o.emit(cmd, map[string]any{
 					"total": total,
 					"count": len(items),
 					key:     items,
+				}, func(w io.Writer) {
+					t := tw(w)
+					fmt.Fprintln(t, "ID\tTITLE\tSUBSCRIBERS\tFAVORITES\tUPDATED")
+					for _, it := range items {
+						fmt.Fprintf(t, "%s\t%s\t%d\t%d\t%s\n",
+							it.PublishedFileID, truncate(it.Title, 48),
+							it.Subscriptions, it.Favorites, unixDate(it.TimeUpdated))
+					}
+					t.Flush()
+					fmt.Fprintf(w, "\n%d of %d shown.\n", len(items), total)
 				})
 			},
 		}
@@ -520,7 +566,7 @@ func workshopCommand(o *options) *cobra.Command {
 				} else {
 					results = wc.RemoveItems(cmd.Context(), args[1], items)
 				}
-				if err := o.print(cmd, summarize(results)); err != nil {
+				if err := o.emit(cmd, summarize(results), renderBatch(results)); err != nil {
 					return err
 				}
 				return batchErr(results)
@@ -567,4 +613,79 @@ func workshopCommand(o *options) *cobra.Command {
 	root.AddCommand(sub, unsub, collection, subsCmd, favsCmd, installedCmd, searchCmd, listColls,
 		createColl, editColl, addItems, removeItems, deleteColl)
 	return root
+}
+
+// --- human-readable renderers ----------------------------------------------
+
+func truncate(s string, n int) string {
+	if s == "" {
+		return "(untitled)"
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
+}
+
+func unixDate(t int64) string {
+	if t <= 0 {
+		return ""
+	}
+	return time.Unix(t, 0).UTC().Format("2006-01-02")
+}
+
+func renderBatch(results []workshop.BatchResult) func(io.Writer) {
+	return func(w io.Writer) {
+		t := tw(w)
+		fmt.Fprintln(t, "ITEM\tRESULT")
+		ok := 0
+		for _, r := range results {
+			if r.Success {
+				ok++
+				fmt.Fprintf(t, "%s\tok\n", r.PublishedFileID)
+			} else {
+				fmt.Fprintf(t, "%s\t%s\n", r.PublishedFileID, r.Error)
+			}
+		}
+		t.Flush()
+		fmt.Fprintf(w, "\n%d succeeded, %d failed.\n", ok, len(results)-ok)
+	}
+}
+
+func renderCollection(w io.Writer, coll workshop.CollectionDetails, details map[string]workshop.PublishedFileDetails) {
+	t := tw(w)
+	if d := coll.Details; d != nil {
+		fmt.Fprintf(t, "Title\t%s\n", d.Title)
+		fmt.Fprintf(t, "ID\t%s\n", coll.PublishedFileID)
+		fmt.Fprintf(t, "Creator\t%s\n", d.Creator)
+		fmt.Fprintf(t, "AppID\t%d\n", d.ConsumerAppID)
+		fmt.Fprintf(t, "Favorites\t%d\n", d.Favorites)
+		fmt.Fprintf(t, "Views\t%d\n", d.Views)
+		fmt.Fprintf(t, "Updated\t%s\n", unixDate(d.TimeUpdated))
+	} else {
+		fmt.Fprintf(t, "ID\t%s\n", coll.PublishedFileID)
+	}
+	fmt.Fprintf(t, "Children\t%d\n", len(coll.Children))
+	t.Flush()
+
+	if len(coll.Children) == 0 {
+		return
+	}
+	fmt.Fprintln(w)
+	t = tw(w)
+	if details != nil {
+		fmt.Fprintln(t, "ITEM\tTITLE\tUPDATED")
+	} else {
+		fmt.Fprintln(t, "ITEM\tSORT")
+	}
+	for _, ch := range coll.Children {
+		if details != nil {
+			d := details[ch.PublishedFileID]
+			fmt.Fprintf(t, "%s\t%s\t%s\n", ch.PublishedFileID, truncate(d.Title, 56), unixDate(d.TimeUpdated))
+		} else {
+			fmt.Fprintf(t, "%s\t%d\n", ch.PublishedFileID, ch.SortOrder)
+		}
+	}
+	t.Flush()
 }

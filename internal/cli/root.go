@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -33,7 +34,7 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 	f := r.PersistentFlags()
 	f.StringVar(&o.configPath, "config", "", "Configuration JSON path")
 	f.StringVar(&o.profile, "profile", "", "Named configuration profile")
-	f.StringVar(&o.format, "output", "json", "Output: json, compact, raw, parsed")
+	f.StringVarP(&o.format, "output", "o", "auto", "Output: auto, table, json, compact, raw, parsed")
 	f.DurationVar(&o.timeout, "timeout", 30*time.Second, "Timeout per HTTP attempt (not game downloads)")
 	f.BoolVar(&o.offline, "offline", false, "Disable network and external SteamCMD execution; use cached metadata")
 	f.BoolVar(&o.allowHTTP, "allow-http", false, "Allow plaintext HTTP outside loopback on a trusted network")
@@ -42,10 +43,10 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 			return errors.New("--timeout must be positive")
 		}
 		switch o.format {
-		case "json", "compact", "raw", "parsed":
+		case "auto", "table", "json", "compact", "raw", "parsed":
 			return nil
 		}
-		return errors.New("--output must be json, compact, raw, or parsed")
+		return errors.New("--output must be auto, table, json, compact, raw, or parsed")
 	}
 	r.AddCommand(statusCommand(o), workshopCommand(o), webCommand(o), asfCommand(o), clientCommand(o), cmdCommand(o), configCommand(o), doctorCommand(o), libraryCommand(o), idCommand(o))
 	return r
@@ -60,6 +61,26 @@ func (o *options) settings() (config.Settings, error) {
 	return s, e
 }
 func (o *options) http() *httpx.Client { return httpx.New(o.timeout, o.offline, o.allowHTTP) }
+
+// human reports whether the caller wants a rendered view rather than data.
+// "auto" is the default and means "the nicest representation available".
+func (o *options) human() bool { return o.format == "auto" || o.format == "table" }
+
+// emit renders v through a table writer when the caller wants a human view and
+// one exists, and falls back to JSON otherwise. This is what makes "auto" the
+// default without every command having to know about output modes.
+//
+// "raw" also renders here. emit is only ever given a value this CLI assembled,
+// never bytes from a server, so there is no unmodified form for raw to mean —
+// and rendering keeps "--output raw status" doing what it always did.
+func (o *options) emit(cmd *cobra.Command, v any, render func(io.Writer)) error {
+	if render != nil && (o.human() || o.format == "raw") {
+		render(cmd.OutOrStdout())
+		return nil
+	}
+	return o.print(cmd, v)
+}
+
 func (o *options) print(cmd *cobra.Command, v any) error {
 	b, e := json.Marshal(v)
 	if e != nil {
@@ -67,10 +88,14 @@ func (o *options) print(cmd *cobra.Command, v any) error {
 	}
 	return o.printBytes(cmd, b)
 }
+
+func tw(w io.Writer) *tabwriter.Writer { return tabwriter.NewWriter(w, 0, 0, 2, ' ', 0) }
 func (o *options) printBytes(cmd *cobra.Command, b []byte) error {
-	// "parsed" reduces an ASF envelope to the value behind it. Any other
-	// payload falls through and is printed as JSON.
-	if o.format == "parsed" && len(bytes.TrimSpace(b)) > 0 {
+	// "parsed" reduces an ASF envelope to the value behind it; "auto" does the
+	// same whenever the payload turns out to be one, which is what makes the
+	// friendly form the default without the caller having to ask for it. Any
+	// other payload falls through and is printed as JSON.
+	if (o.format == "parsed" || o.human()) && len(bytes.TrimSpace(b)) > 0 {
 		if lines, ok := asf.Parse(b); ok {
 			w := cmd.OutOrStdout()
 			for _, l := range lines {
@@ -149,4 +174,17 @@ func readBounded(r io.Reader) ([]byte, error) {
 		return nil, errors.New("input exceeds 8 MiB")
 	}
 	return b, nil
+}
+
+func humanBytes(n int64) string {
+	const u = 1024
+	if n < u {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(u), 0
+	for v := n / u; v >= u; v /= u {
+		div *= u
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }

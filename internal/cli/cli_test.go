@@ -68,15 +68,29 @@ func TestSteamIDConversions(t *testing.T) {
 		}
 	}
 }
-func TestASFCommandFailureHasNonzeroStatusAndJSON(t *testing.T) {
+
+// A refused ASF command exits nonzero and still shows why, in whichever form
+// the caller asked for.
+func TestASFCommandFailureHasNonzeroStatusAndExplanation(t *testing.T) {
 	cleanEnv(t)
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"Success":false,"Message":"invalid command"}`))
 	}))
 	defer s.Close()
+
+	// Default output reduces the envelope to its message.
 	out, e := execute(t, "asf", "--url", s.URL, "command", "status")
+	if e == nil {
+		t.Fatal("a refused command must exit nonzero")
+	}
+	if !strings.Contains(out, "invalid command") {
+		t.Errorf("the reason should be shown: %q", out)
+	}
+
+	// Asking for JSON still yields the whole envelope.
+	out, e = execute(t, "-o", "json", "asf", "--url", s.URL, "command", "status")
 	if e == nil || !strings.Contains(out, `"Success": false`) {
-		t.Fatal(out, e)
+		t.Fatalf("json output should carry the envelope: %q %v", out, e)
 	}
 }
 func TestCompletionIsOffline(t *testing.T) {
@@ -144,7 +158,7 @@ func TestWorkshopSubReportsPerItemFailure(t *testing.T) {
 	defer api.Close()
 	workshopEnv(t, api.URL, api.URL)
 
-	out, err := execute(t, "--allow-http", "workshop", "sub", "4000", "111", "222")
+	out, err := execute(t, "--allow-http", "-o", "json", "workshop", "sub", "4000", "111", "222")
 	if err != nil {
 		t.Fatalf("a partial success should not fail the command: %v", err)
 	}
@@ -320,7 +334,7 @@ func TestWorkshopInstalledIsLocal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := execute(t, "workshop", "installed", "4000", "--root", root)
+	out, err := execute(t, "-o", "json", "workshop", "installed", "4000", "--root", root)
 	if err != nil {
 		t.Fatalf("unexpected error: %v\n%s", err, out)
 	}
@@ -687,5 +701,109 @@ func TestClientDefaultArgs(t *testing.T) {
 	t.Setenv("STEAM_CLIENT_ARGS", "-silent -noverifyfiles")
 	if got := run("client", "run", "730"); got != "-silent|-noverifyfiles|steam://run/730|" {
 		t.Errorf("STEAM_CLIENT_ARGS should override the profile: %q", got)
+	}
+}
+
+// --- default output ---------------------------------------------------------
+
+// The default is a rendered view where one exists, and JSON where none does.
+func TestAutoRendersWhereARendererExists(t *testing.T) {
+	cleanEnv(t)
+	out, err := execute(t, "--offline", "id", "76561197960287930")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(strings.TrimSpace(out), "{") {
+		t.Errorf("default output should be rendered, not JSON:\n%s", out)
+	}
+	if !strings.Contains(out, "steamid64") || !strings.Contains(out, "STEAM_0:0:11101") {
+		t.Errorf("rendered output missing fields:\n%s", out)
+	}
+
+	js, err := execute(t, "-o", "json", "--offline", "id", "76561197960287930")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]string
+	if e := json.Unmarshal([]byte(js), &parsed); e != nil {
+		t.Fatalf("-o json must still produce JSON: %v", e)
+	}
+}
+
+// An ASF envelope is reduced automatically; a payload that is not one is not.
+func TestAutoParsesASFEnvelopesOnly(t *testing.T) {
+	cleanEnv(t)
+	token := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"Result":{"A":{"Result":"JKWGP"}},"Success":true}`))
+	}))
+	defer token.Close()
+
+	out, err := execute(t, "asf", "--url", token.URL, "token", "A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "JKWGP" {
+		t.Errorf("an ASF envelope should be reduced by default, got %q", out)
+	}
+
+	// A bot listing carries data per bot, not an outcome; it must survive whole.
+	listing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"Result":{"A":{"BotName":"A","IsConnectedAndLoggedOn":true,
+		  "s_SteamID":"76561197960287930","CardsFarmer":{"Paused":false,"NowFarming":false,"GamesToFarm":[]}}},
+		  "Message":"OK","Success":true}`))
+	}))
+	defer listing.Close()
+
+	out, err = execute(t, "asf", "--url", listing.URL, "bots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "A: OK") {
+		t.Errorf("a bot listing must not be flattened to its envelope message:\n%s", out)
+	}
+	if !strings.Contains(out, "BOT") || !strings.Contains(out, "76561197960287930") {
+		t.Errorf("bot listing should render as a table:\n%s", out)
+	}
+}
+
+func TestStatusRendersByDefaultAndAsJSON(t *testing.T) {
+	cleanEnv(t)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "GetNumberOfCurrentPlayers") {
+			w.Write([]byte(`{"response":{"player_count":1234567,"result":1}}`))
+			return
+		}
+		w.Write([]byte(`{"ok":1}`))
+	}))
+	defer api.Close()
+	t.Setenv("STEAM_WEB_URL", api.URL)
+	t.Setenv("STEAM_COMMUNITY_URL", api.URL)
+
+	out, err := execute(t, "--allow-http", "status", "--no-cm", "--no-coordinator", "--app", "730")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Core Services", "Online Players", "1,234,567"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("default status output missing %q:\n%s", want, out)
+		}
+	}
+
+	js, err := execute(t, "--allow-http", "-o", "json", "status", "--no-cm", "--no-coordinator", "--app", "730")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(js), "{") {
+		t.Errorf("-o json should produce JSON:\n%s", js)
+	}
+}
+
+func TestOutputShorthandAndValidation(t *testing.T) {
+	cleanEnv(t)
+	if _, err := execute(t, "-o", "table", "--offline", "id", "76561197960287930"); err != nil {
+		t.Errorf("-o shorthand should work: %v", err)
+	}
+	if _, err := execute(t, "-o", "nonsense", "--offline", "id", "76561197960287930"); err == nil {
+		t.Error("an invalid --output should be rejected")
 	}
 }

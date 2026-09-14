@@ -123,13 +123,27 @@ func TestParseShapes(t *testing.T) {
 	}
 }
 
-// A token must never be inferred from an unrelated field.
+// A value must never be inferred from an unrelated field. An entry carrying
+// neither a scalar Result nor a Message has no outcome to report, so the
+// response is reported as unparsed rather than rendered as a blank line.
 func TestParseDoesNotInventValues(t *testing.T) {
-	got, ok := Parse([]byte(`{"Result":{"A":{"Success":false}},"Message":"","Success":false}`))
-	if !ok {
-		t.Fatal("envelope should be recognized")
+	if _, ok := Parse([]byte(`{"Result":{"A":{"Success":false}},"Message":"","Success":false}`)); ok {
+		t.Error("an entry with no result and no message should not be claimed as parsed")
 	}
-	if len(got) != 1 || got[0].Value != "" {
-		t.Errorf("got %+v, want an empty value rather than a guess", got)
+}
+
+// Endpoints that return a rich object per bot must not be reduced to one line:
+// doing so would discard the data the caller asked for.
+func TestParseDeclinesDataObjects(t *testing.T) {
+	botListing := `{"Result":{"Alpha":{"BotName":"Alpha","IsConnectedAndLoggedOn":true,
+	  "CardsFarmer":{"Paused":false},"SteamID":"76561197960287930"}},"Message":"OK","Success":true}`
+	if _, ok := Parse([]byte(botListing)); ok {
+		t.Error("a per-bot data object should be reported as unparsed so it prints in full")
+	}
+
+	asfStatus := `{"Result":{"BuildVariant":"linux-x64","GlobalConfig":{"IPC":true},"Version":"6.3.10.1"},
+	  "Message":"OK","Success":true}`
+	if _, ok := Parse([]byte(asfStatus)); ok {
+		t.Error("the ASF status object should be reported as unparsed")
 	}
 }

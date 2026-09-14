@@ -106,3 +106,24 @@ New coverage includes: EResult interpretation from both the `x-eresult` header a
 - `steamcli client` forwards to the desktop client. Discovery verified live: resolves `/usr/bin/steam` on this machine. The self-reference guard was verified live by pointing `STEAM_CLIENT_PATH` at this CLI, which is refused.
 - **No game was launched and no `steam://` URL was handed to the running desktop client during validation**, since that has a visible effect on the user's session. Argument forwarding, exit-code propagation and URL construction are covered against a stand-in launcher script.
 - `asf --bots` and `--output parsed` verified live against the user's ArchiSteamFarm 6.3.10.1: token extraction for one and several bots, the default `ASF` selector, a scalar command result, and a `Success:false` response printing its reason while exiting nonzero.
+
+## Addendum, 2026-09-14: default output
+
+`--output auto` became the default, with `-o` as shorthand. Verified live: `status`
+renders its full report with no flags, `library`, `id`, `doctor`, `workshop
+collection`, `search`, `subs`, `installed` and the batch summaries render as tables,
+and `asf token` reduces to the bare code.
+
+Making the ASF reduction automatic initially broke `asf bots` and `asf status`,
+which were flattened to their envelope message and lost the data being asked for.
+`asf.Parse` now claims a payload only when each entry carries a scalar result or a
+message, and reports anything else as unparsed so it prints whole; `asf bots` gained
+its own table. Both directions are covered by tests, including that a bot listing is
+never reduced to `A: OK`.
+
+`--output raw` on `status` still renders the report rather than JSON: `emit` is only
+given values this CLI assembles, never server bytes, so raw has no other meaning
+there and the pre-existing behaviour is preserved.
+
+**This is a breaking change for scripts** that parsed the previous JSON default;
+`-o json` restores it. Tests that parse output were updated to request it explicitly.

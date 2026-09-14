@@ -101,7 +101,11 @@ func Parse(b []byte) ([]ParsedLine, bool) {
 		return []ParsedLine{{Value: s}}, true
 	}
 
-	// Otherwise Result is keyed by bot name.
+	// Otherwise Result may be keyed by bot name. Only treat it that way when
+	// each value is itself an envelope carrying a scalar Result or a Message.
+	// Endpoints like Api/Bot return a rich object per bot; reducing those to a
+	// single line would discard the very data the caller asked for, so they
+	// are reported as unparsed and printed as JSON instead.
 	var byBot map[string]json.RawMessage
 	if e := json.Unmarshal(env.Result, &byBot); e != nil || len(byBot) == 0 {
 		if env.Message != "" {
@@ -119,20 +123,17 @@ func Parse(b []byte) ([]ParsedLine, bool) {
 	out := make([]ParsedLine, 0, len(names))
 	for _, name := range names {
 		var inner Envelope
-		value := ""
-		if json.Unmarshal(byBot[name], &inner) == nil {
-			if s, ok := scalar(inner.Result); ok && s != "" {
-				value = s
-			} else if inner.Message != "" {
-				value = inner.Message
-			}
+		if json.Unmarshal(byBot[name], &inner) != nil {
+			return nil, false
 		}
-		if value == "" {
-			if s, ok := scalar(byBot[name]); ok {
-				value = s
-			} else {
-				value = env.Message
+		value, ok := scalar(inner.Result)
+		if !ok || value == "" {
+			if inner.Message == "" {
+				// No per-item result and no message: this is a data object,
+				// not an outcome. Let the caller print it in full.
+				return nil, false
 			}
+			value = inner.Message
 		}
 		out = append(out, ParsedLine{Bot: name, Value: value})
 	}
@@ -154,4 +155,67 @@ func scalar(raw json.RawMessage) (string, bool) {
 		return s, true
 	}
 	return t, true
+}
+
+// BotSummary is the handful of fields worth showing per bot in a listing.
+type BotSummary struct {
+	Name           string
+	SteamID        string
+	Connected      bool
+	Farming        bool
+	GamesRemaining int
+	CardsRemaining int
+}
+
+// Bots extracts a per-bot summary from an Api/Bot response. It reports false
+// when the payload is not a bot listing, so the caller can print it verbatim.
+func Bots(b []byte) ([]BotSummary, bool) {
+	var env struct {
+		Result map[string]struct {
+			BotName     string `json:"BotName"`
+			SteamID     string `json:"s_SteamID"`
+			Nickname    string `json:"Nickname"`
+			Connected   bool   `json:"IsConnectedAndLoggedOn"`
+			KeepRunning bool   `json:"KeepRunning"`
+			CardsFarmer struct {
+				Paused      bool `json:"Paused"`
+				NowFarming  bool `json:"NowFarming"`
+				GamesToFarm []struct {
+					AppID          uint32 `json:"AppID"`
+					CardsRemaining int    `json:"CardsRemaining"`
+				} `json:"GamesToFarm"`
+			} `json:"CardsFarmer"`
+		} `json:"Result"`
+	}
+	if json.Unmarshal(b, &env) != nil || len(env.Result) == 0 {
+		return nil, false
+	}
+
+	names := make([]string, 0, len(env.Result))
+	for k := range env.Result {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+
+	out := make([]BotSummary, 0, len(names))
+	for _, n := range names {
+		r := env.Result[n]
+		if r.BotName == "" {
+			// Not a bot object; let the caller print the payload as-is.
+			return nil, false
+		}
+		cards := 0
+		for _, g := range r.CardsFarmer.GamesToFarm {
+			cards += g.CardsRemaining
+		}
+		out = append(out, BotSummary{
+			Name:           r.BotName,
+			SteamID:        r.SteamID,
+			Connected:      r.Connected,
+			Farming:        r.CardsFarmer.NowFarming,
+			GamesRemaining: len(r.CardsFarmer.GamesToFarm),
+			CardsRemaining: cards,
+		})
+	}
+	return out, true
 }

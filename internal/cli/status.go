@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,74 +49,7 @@ func statusCommand(o *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if o.format != "raw" {
-				return o.print(cmd, report)
-			}
-
-			var sb strings.Builder
-			fmt.Fprintf(&sb, "Steam Status Report - %s\n\n", report.Timestamp.Format("2006-01-02 15:04:05 UTC"))
-
-			sb.WriteString("Core Services:\n")
-			for _, ep := range report.Endpoints {
-				if ep.Error != "" {
-					fmt.Fprintf(&sb, "  %-18s: [%s] %s\n", ep.Name, strings.ToUpper(ep.Status), ep.Error)
-					continue
-				}
-				fmt.Fprintf(&sb, "  %-18s: [%s] %d ms (HTTP %d)\n",
-					ep.Name, strings.ToUpper(ep.Status), ep.LatencyMS, ep.HTTPCode)
-			}
-
-			if len(report.PlayerCounts) > 0 {
-				sb.WriteString("\nOnline Players:\n")
-				for _, pc := range report.PlayerCounts {
-					if pc.Error != "" {
-						fmt.Fprintf(&sb, "  %-20s: unavailable (%s)\n", pc.Name, pc.Error)
-						continue
-					}
-					fmt.Fprintf(&sb, "  %-20s: %s\n", pc.Name, thousands(pc.Count))
-				}
-			}
-
-			for _, c := range report.Coordinators {
-				fmt.Fprintf(&sb, "\nGame Coordinator - %s (AppID %d):\n", c.Name, c.AppID)
-				if c.Error != "" {
-					fmt.Fprintf(&sb, "  unavailable (%s)\n", c.Error)
-					continue
-				}
-				for _, svc := range sortedKeys(c.Services) {
-					fmt.Fprintf(&sb, "  %-18s: %s\n", svc, c.Services[svc])
-				}
-				if len(c.Matchmaking) > 0 {
-					sb.WriteString("  Matchmaking:\n")
-					for _, k := range sortedKeys(c.Matchmaking) {
-						fmt.Fprintf(&sb, "    %-16s: %v\n", k, c.Matchmaking[k])
-					}
-				}
-				if len(c.Datacenters) > 0 {
-					sb.WriteString("  Datacenters:\n")
-					for _, dc := range sortedKeys(c.Datacenters) {
-						fmt.Fprintf(&sb, "    %-16s: %s\n", dc, formatDatacenter(c.Datacenters[dc]))
-					}
-				}
-			}
-
-			if len(report.ConnectionManagers) > 0 {
-				sb.WriteString("\nConnection Managers:\n")
-				for _, cm := range report.ConnectionManagers {
-					if cm.Status == "online" {
-						fmt.Fprintf(&sb, "  %-25s: [ONLINE] %d ms\n", cm.Server, cm.LatencyMS)
-					} else {
-						fmt.Fprintf(&sb, "  %-25s: [%s] %s\n", cm.Server, strings.ToUpper(cm.Status), cm.Error)
-					}
-				}
-			}
-
-			for _, w := range report.Warnings {
-				fmt.Fprintf(&sb, "\nNote: %s\n", w)
-			}
-
-			_, err = fmt.Fprint(cmd.OutOrStdout(), sb.String())
-			return err
+			return o.emit(cmd, report, func(w io.Writer) { renderStatus(w, report) })
 		},
 	}
 
@@ -124,6 +58,72 @@ func statusCommand(o *options) *cobra.Command {
 	cmd.Flags().IntVar(&cmLimit, "cm-limit", 5, "Number of connection managers to probe")
 	cmd.Flags().StringArrayVar(&appIDs, "app", nil, "Report the player count for this AppID instead of the default titles; repeat for multiple")
 	return cmd
+}
+
+func renderStatus(out io.Writer, report status.Report) {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Steam Status Report - %s\n\n", report.Timestamp.Format("2006-01-02 15:04:05 UTC"))
+
+	sb.WriteString("Core Services:\n")
+	for _, ep := range report.Endpoints {
+		if ep.Error != "" {
+			fmt.Fprintf(&sb, "  %-18s: [%s] %s\n", ep.Name, strings.ToUpper(ep.Status), ep.Error)
+			continue
+		}
+		fmt.Fprintf(&sb, "  %-18s: [%s] %d ms (HTTP %d)\n",
+			ep.Name, strings.ToUpper(ep.Status), ep.LatencyMS, ep.HTTPCode)
+	}
+
+	if len(report.PlayerCounts) > 0 {
+		sb.WriteString("\nOnline Players:\n")
+		for _, pc := range report.PlayerCounts {
+			if pc.Error != "" {
+				fmt.Fprintf(&sb, "  %-20s: unavailable (%s)\n", pc.Name, pc.Error)
+				continue
+			}
+			fmt.Fprintf(&sb, "  %-20s: %s\n", pc.Name, thousands(pc.Count))
+		}
+	}
+
+	for _, c := range report.Coordinators {
+		fmt.Fprintf(&sb, "\nGame Coordinator - %s (AppID %d):\n", c.Name, c.AppID)
+		if c.Error != "" {
+			fmt.Fprintf(&sb, "  unavailable (%s)\n", c.Error)
+			continue
+		}
+		for _, svc := range sortedKeys(c.Services) {
+			fmt.Fprintf(&sb, "  %-18s: %s\n", svc, c.Services[svc])
+		}
+		if len(c.Matchmaking) > 0 {
+			sb.WriteString("  Matchmaking:\n")
+			for _, k := range sortedKeys(c.Matchmaking) {
+				fmt.Fprintf(&sb, "    %-16s: %v\n", k, c.Matchmaking[k])
+			}
+		}
+		if len(c.Datacenters) > 0 {
+			sb.WriteString("  Datacenters:\n")
+			for _, dc := range sortedKeys(c.Datacenters) {
+				fmt.Fprintf(&sb, "    %-16s: %s\n", dc, formatDatacenter(c.Datacenters[dc]))
+			}
+		}
+	}
+
+	if len(report.ConnectionManagers) > 0 {
+		sb.WriteString("\nConnection Managers:\n")
+		for _, cm := range report.ConnectionManagers {
+			if cm.Status == "online" {
+				fmt.Fprintf(&sb, "  %-25s: [ONLINE] %d ms\n", cm.Server, cm.LatencyMS)
+			} else {
+				fmt.Fprintf(&sb, "  %-25s: [%s] %s\n", cm.Server, strings.ToUpper(cm.Status), cm.Error)
+			}
+		}
+	}
+
+	for _, w := range report.Warnings {
+		fmt.Fprintf(&sb, "\nNote: %s\n", w)
+	}
+
+	fmt.Fprint(out, sb.String())
 }
 
 func sortedKeys[V any](m map[string]V) []string {

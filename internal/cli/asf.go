@@ -2,9 +2,11 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
+
 	"github.com/spf13/cobra"
 	"steamcli.local/steam/internal/asf"
-	"strings"
 )
 
 func asfCommand(o *options) *cobra.Command {
@@ -67,7 +69,22 @@ func asfCommand(o *options) *cobra.Command {
 			return e
 		}
 		b, e := c.Call(cmd.Context(), "GET", p, nil, nil)
-		return emit(cmd, b, e)
+		if e != nil || !o.human() {
+			return emit(cmd, b, e)
+		}
+		summaries, ok := asf.Bots(b)
+		if !ok {
+			return emit(cmd, b, e)
+		}
+		w := cmd.OutOrStdout()
+		t := tw(w)
+		fmt.Fprintln(t, "BOT\tCONNECTED\tFARMING\tGAMES LEFT\tCARDS LEFT\tSTEAMID")
+		for _, s := range summaries {
+			fmt.Fprintf(t, "%s\t%t\t%t\t%d\t%d\t%s\n",
+				s.Name, s.Connected, s.Farming, s.GamesRemaining, s.CardsRemaining, s.SteamID)
+		}
+		t.Flush()
+		return nil
 	}}
 	command := &cobra.Command{Use: "command COMMAND...", Short: "Execute an ASF command as IPC owner (can change account state)", Args: cobra.MinimumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		c, e := client()
