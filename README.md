@@ -1,6 +1,10 @@
 # steam-cli
 
-A private, cross-platform Go CLI for Steam Web API, Valve SteamCMD, ArchiSteamFarm IPC, and local Steam metadata. Builds to a single executable. No telemetry, hosted middleware, browser automation, Python, Node, or .NET runtime is required by the CLI.
+[![test](https://github.com/Bluscream/steam-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/Bluscream/steam-cli/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/Bluscream/steam-cli?sort=semver)](https://github.com/Bluscream/steam-cli/releases)
+[![license](https://img.shields.io/badge/license-Unlicense-blue)](LICENSE)
+
+A cross-platform Go CLI for Steam Web API, Valve SteamCMD, ArchiSteamFarm IPC, and local Steam metadata. Builds to a single executable. No telemetry, hosted middleware, browser automation, Python, Node, or .NET runtime is required by the CLI.
 
 ```text
 steamcli status     Steam service health, player counts, CMs, game coordinators
@@ -16,7 +20,22 @@ steamcli doctor     local configuration and runtime diagnostics
 steamcli completion bash | zsh | fish | powershell
 ```
 
-The Web API and ASF client are native Go. SteamCMD is downloaded from Valve when needed, and an ASF instance must already be running. Valve's platform dependencies and ASF's configuration still apply. This project remains local/private; nothing has been published.
+The Web API and ASF client are native Go. SteamCMD is downloaded from Valve when needed, and an ASF instance must already be running. Valve's platform dependencies and ASF's configuration still apply. Not affiliated with, endorsed by, or sponsored by Valve Corporation.
+
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Bluscream/steam-cli/main/scripts/install.sh | sh
+```
+
+Detects your platform, verifies the download against the release `SHA256SUMS`, and installs to `~/.local/bin`. Set `STEAMCLI_PREFIX` to install elsewhere or `STEAMCLI_VERSION=v0.6.0` to pin a release. Read the script before piping it to a shell, as you should with any such installer.
+
+| Method | How |
+| --- | --- |
+| AppImage | download `steamcli-*-x86_64.AppImage` from [releases](https://github.com/Bluscream/steam-cli/releases), `chmod +x`, run |
+| Arch Linux | `cd packaging && makepkg -si` |
+| Prebuilt binary | `steamcli-{linux,darwin,windows}-{amd64,arm64}` from [releases](https://github.com/Bluscream/steam-cli/releases) |
+| From source | see below |
 
 ## Build and run
 
@@ -248,7 +267,7 @@ With `STEAM_ASF_URL` and `ASF_IPC_PASSWORD` configured:
 ```sh
 ./bin/steamcli asf status
 ./bin/steamcli asf bots --bots Alpha,Beta
-./bin/steamcli asf token Bluscream --output parsed   # aliases: 2fa, auth
+./bin/steamcli asf token gabeN --output parsed   # aliases: 2fa, auth
 ./bin/steamcli asf token --bots Alpha,Beta --output parsed
 ./bin/steamcli asf pause --bots Alpha --resume-in 600
 ./bin/steamcli asf bots
@@ -290,7 +309,7 @@ Commands that act on bots take a selector: a positional argument, the persistent
 
 Library discovery checks common Windows/macOS/Linux locations and Linux Flatpak. `--root` handles nonstandard/custom installations. Both legacy and modern `libraryfolders.vdf` layouts are supported. Malformed manifests produce warnings in the JSON report; their contents are never executed. Library results describe local manifest state, not proof of an account license or cloud availability.
 
-JSON is indented by default, `compact` produces compact JSON, and `raw` preserves response bytes. `parsed` reduces an ASF response to the value behind it, so `asf token Bluscream --output parsed` prints `JKWGP` and nothing else. ASF nests its payload differently per endpoint: a token arrives as `Result[bot].Result`, an executed command as a bare `Result` string, and a refused operation explains itself in `Result[bot].Message` or the envelope's `Message`. `parsed` walks that order and prints the first value it finds, prefixing each line with the bot name when more than one bot answered. A `Success:false` response still exits nonzero while showing its reason. Payloads that are not ASF envelopes are printed as JSON, so `parsed` is safe to set globally. HTTP errors omit response bodies/credential-bearing URLs. There are no hidden browser sessions, analytics, cookie jars, response logs, or background update checks. Normal HTTP proxy environment settings are honored by Go. Read-only HTTP retries are limited to two for 429/502/503/504, honor bounded `Retry-After`, and never retry authentication failures. Redirects are not followed, preventing credentials from being forwarded.
+JSON is indented by default, `compact` produces compact JSON, and `raw` preserves response bytes. `parsed` reduces an ASF response to the value behind it, so `asf token gabeN --output parsed` prints `JKWGP` and nothing else. ASF nests its payload differently per endpoint: a token arrives as `Result[bot].Result`, an executed command as a bare `Result` string, and a refused operation explains itself in `Result[bot].Message` or the envelope's `Message`. `parsed` walks that order and prints the first value it finds, prefixing each line with the bot name when more than one bot answered. A `Success:false` response still exits nonzero while showing its reason. Payloads that are not ASF envelopes are printed as JSON, so `parsed` is safe to set globally. HTTP errors omit response bodies/credential-bearing URLs. There are no hidden browser sessions, analytics, cookie jars, response logs, or background update checks. Normal HTTP proxy environment settings are honored by Go. Read-only HTTP retries are limited to two for 429/502/503/504, honor bounded `Retry-After`, and never retry authentication failures. Redirects are not followed, preventing credentials from being forwarded.
 
 Exit codes: `0` success, `1` CLI/HTTP/application/verification failure, `130` interrupted; SteamCMD's positive nonzero process exit codes pass through. SteamCMD output remains its native terminal output regardless of `--output`.
 

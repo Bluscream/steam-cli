@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=steam-cli
+GenericName=Steam command-line toolkit
+Comment=Steam Web API, Workshop, SteamCMD, ArchiSteamFarm and desktop client from the terminal
+Exec=steamcli
+Icon=steamcli
+Categories=Utility;ConsoleOnly;Game;
+Terminal=true
+Keywords=steam;workshop;steamcmd;archisteamfarm;asf;

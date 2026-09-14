@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="console-application">
+  <id>io.github.bluscream.steamcli</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Unlicense</project_license>
+  <name>steam-cli</name>
+  <summary>Steam Web API, Workshop, SteamCMD and ArchiSteamFarm from the terminal</summary>
+  <description>
+    <p>
+      A single static binary for working with Steam from the command line: Web API
+      discovery and calls, Workshop search and collection management, service status,
+      SteamCMD bootstrap and downloads, ArchiSteamFarm IPC, local library inspection,
+      and forwarding to the desktop Steam client.
+    </p>
+    <p>No telemetry, no hosted middleware, no browser automation, and no runtime dependencies.</p>
+  </description>
+  <url type="homepage">https://github.com/Bluscream/steam-cli</url>
+  <url type="bugtracker">https://github.com/Bluscream/steam-cli/issues</url>
+  <provides><binary>steamcli</binary></provides>
+  <categories>
+    <category>Utility</category>
+    <category>Game</category>
+  </categories>
+</component>

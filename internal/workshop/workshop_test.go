@@ -25,7 +25,7 @@ func newCommunity(base string) *community.Client {
 	return &community.Client{
 		HTTP:        httpx.New(5*time.Second, false, true),
 		BaseURL:     base,
-		LoginSecure: "76561198022446661%7C%7Ctoken",
+		LoginSecure: "76561197960287930%7C%7Ctoken",
 	}
 }
 

@@ -128,7 +128,7 @@ func workshopEnv(t *testing.T, api, comm string) {
 	t.Setenv("STEAM_WEB_API_KEY", "k")
 	t.Setenv("STEAM_WEB_URL", api)
 	t.Setenv("STEAM_COMMUNITY_URL", comm)
-	t.Setenv("STEAM_LOGIN_SECURE", "76561198022446661%7C%7Ctok")
+	t.Setenv("STEAM_LOGIN_SECURE", "76561197960287930%7C%7Ctok")
 }
 
 func TestWorkshopSubReportsPerItemFailure(t *testing.T) {
@@ -423,11 +423,11 @@ func asfServer(t *testing.T, handler http.HandlerFunc) (string, func()) {
 func TestASFParsedExtractsToken(t *testing.T) {
 	cleanEnv(t)
 	url, done := asfServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"Result":{"Bluscream":{"Result":"JKWGP","Message":"Success!","Success":true}},"Message":"OK","Success":true}`))
+		w.Write([]byte(`{"Result":{"gabeN":{"Result":"JKWGP","Message":"Success!","Success":true}},"Message":"OK","Success":true}`))
 	})
 	defer done()
 
-	out, err := execute(t, "--output", "parsed", "asf", "--url", url, "token", "Bluscream")
+	out, err := execute(t, "--output", "parsed", "asf", "--url", url, "token", "gabeN")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -455,11 +455,11 @@ func TestASFParsedMultipleBotsArePrefixed(t *testing.T) {
 func TestASFParsedFallsBackToMessage(t *testing.T) {
 	cleanEnv(t)
 	url, done := asfServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"Result":{"Anni":{"Result":null,"Message":"Bot is not connected.","Success":false}},"Success":false}`))
+		w.Write([]byte(`{"Result":{"erikjohnson":{"Result":null,"Message":"Bot is not connected.","Success":false}},"Success":false}`))
 	})
 	defer done()
 
-	out, err := execute(t, "--output", "parsed", "asf", "--url", url, "token", "Anni")
+	out, err := execute(t, "--output", "parsed", "asf", "--url", url, "token", "erikjohnson")
 	// Success=false must still exit nonzero while showing the reason.
 	if err == nil {
 		t.Error("a failed ASF operation should exit nonzero")

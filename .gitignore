@@ -6,3 +6,5 @@
 !.env.example
 *.test
 coverage.out
+/build/
+*.AppImage

@@ -1,0 +1,9 @@
+title: steam-cli
+description: Steam Web API, Workshop, SteamCMD, ArchiSteamFarm and the desktop client, from one static binary.
+theme: jekyll-theme-cayman
+show_downloads: true
+github:
+  repository_url: https://github.com/Bluscream/steam-cli
+exclude:
+  - DEPENDENCY_LICENSES.txt
+  - references.json

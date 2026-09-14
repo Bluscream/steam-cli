@@ -1,6 +1,11 @@
+---
+title: Third-party provenance
+nav_order: 4
+---
+
 # Third-party provenance
 
-The application code in `cmd/` and `internal/` was written for this private workspace. No third-party repository source was pasted into those directories. Protocol conventions, endpoint names, and behavioral findings were researched against the sources in [RESEARCH.md](RESEARCH.md); they are not asserted to be newly invented algorithms.
+The application code in `cmd/` and `internal/` is released into the public domain under [the Unlicense](../LICENSE). No third-party repository source was pasted into those directories. Protocol conventions, endpoint names, and behavioral findings were researched against the sources in [RESEARCH.md](RESEARCH.md); they are not asserted to be newly invented algorithms.
 
 Runtime-linked Go modules are pinned by `go.mod` / `go.sum` and copied by `go mod vendor`. Keep `vendor/` license files with any source redistribution and include applicable notices with binary distributions. The Go standard library and toolchain retain their own licenses.
 
@@ -26,4 +31,8 @@ It is embedded with `go:embed`, so every distributed artifact contains it and th
 
 Reference-only repositories remain under ignored `.references/`, with exact revisions in [references.json](references.json). Their complete licenses remain in those clones. They are not compiled into or bundled with the CLI. Reference libraries were assessed for suitability; no new API-client runtime dependency was added where the standard HTTP library already supplied the needed functionality.
 
-SteamCMD is proprietary Valve software, fetched directly from Valve on demand. It is not redistributed as part of this source tree or the CLI artifacts. ASF is a separately operated service; its C# application is not embedded. This repository intentionally does not assign an open-source license to the user's new private application code or publish it anywhere.
+SteamCMD is proprietary Valve software, fetched directly from Valve on demand. It is not redistributed as part of this source tree or the CLI artifacts. ASF is a separately operated service; its C# application is not embedded.
+
+The Unlicense covers this project's own code only. It does not and cannot relicense the vendored Go modules, the embedded xPaw catalog, Valve's SteamCMD, or anything else listed above; those keep their own terms, and their notices must travel with any redistribution.
+
+This project is not affiliated with, endorsed by, or sponsored by Valve Corporation. Steam, SteamCMD and the Steam logo are trademarks of Valve Corporation.

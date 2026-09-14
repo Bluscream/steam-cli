@@ -13,7 +13,7 @@ import (
 	"steamcli.local/steam/internal/httpx"
 )
 
-const fakeCookie = "76561198022446661%7C%7CeyJhbGciOiJF.signature"
+const fakeCookie = "76561197960287930%7C%7CeyJhbGciOiJF.signature"
 
 func newClient(base string) *Client {
 	return &Client{
@@ -29,7 +29,7 @@ func TestSteamIDFromCookie(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if id != "76561198022446661" {
+	if id != "76561197960287930" {
 		t.Errorf("SteamID = %q", id)
 	}
 }

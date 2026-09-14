@@ -59,8 +59,8 @@ func TestParseShapes(t *testing.T) {
 		ok   bool
 	}{{
 		name: "two-factor token nested under the bot",
-		body: `{"Result":{"Bluscream":{"Result":"JKWGP","Message":"Success!","Success":true}},"Message":"OK","Success":true}`,
-		want: []ParsedLine{{"Bluscream", "JKWGP"}},
+		body: `{"Result":{"gabeN":{"Result":"JKWGP","Message":"Success!","Success":true}},"Message":"OK","Success":true}`,
+		want: []ParsedLine{{"gabeN", "JKWGP"}},
 		ok:   true,
 	}, {
 		name: "several bots come back sorted",
@@ -74,8 +74,8 @@ func TestParseShapes(t *testing.T) {
 		ok:   true,
 	}, {
 		name: "no token falls back to the bot's message",
-		body: `{"Result":{"Anni":{"Result":null,"Message":"Bot is not connected.","Success":false}},"Success":false}`,
-		want: []ParsedLine{{"Anni", "Bot is not connected."}},
+		body: `{"Result":{"erikjohnson":{"Result":null,"Message":"Bot is not connected.","Success":false}},"Success":false}`,
+		want: []ParsedLine{{"erikjohnson", "Bot is not connected."}},
 		ok:   true,
 	}, {
 		name: "no per-bot detail falls back to the envelope message",

@@ -1,3 +1,8 @@
+---
+title: Validation record
+nav_order: 3
+---
+
 # Validation record
 
 Validated locally on **2026-09-13**, Linux amd64. Account payloads, API keys, IPC passwords, and generated two-factor codes are intentionally absent from this report.

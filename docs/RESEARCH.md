@@ -1,3 +1,8 @@
+---
+title: Research and decisions
+nav_order: 2
+---
+
 # Research and implementation decisions
 
 Research date: 2026-09-13. Nine upstream repositories were cloned into the ignored `.references/` directory for source inspection. Exact repository URLs, commits, and commit dates are in [references.json](references.json). No reference repository is a runtime dependency.
