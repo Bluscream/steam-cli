@@ -37,6 +37,9 @@ Detects your platform, verifies the download against the release `SHA256SUMS`, a
 | Prebuilt binary | `steamcli-{linux,darwin,windows}-{amd64,arm64}` from [releases](https://github.com/Bluscream/steam-cli/releases) |
 | From source | see below |
 
+## Screenshots
+![](https://cdn.discordapp.com/attachments/1065291958794322012/1549169144820408420/image.png?ex=6aa9b7b2&is=6aa86632&hm=c91a1dabe32b001d0989afd20e860589dccff5deca389637827506732421ca9e&)
+
 ## Build and run
 
 Use Go **1.26 or newer**; the module selects the tested **1.27.1** toolchain. Dependencies and their licenses are included in `vendor/`.
