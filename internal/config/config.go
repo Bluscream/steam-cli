@@ -176,12 +176,6 @@ func Secret(env, file string, aliases ...string) (string, error) {
 	return strings.TrimRight(string(b), "\r\n"), nil
 }
 func (s Settings) WebKey() (string, error) {
-	if s.WebKeyEnv == "STEAM_API_KEY" {
-		return Secret(s.WebKeyEnv, s.WebKeyFile, "STEAM_WEB_API_KEY")
-	}
-	if s.WebKeyEnv == "STEAM_WEB_API_KEY" {
-		return Secret(s.WebKeyEnv, s.WebKeyFile, "STEAM_API_KEY")
-	}
 	return Secret(s.WebKeyEnv, s.WebKeyFile)
 }
 func (s Settings) ASFPassword() (string, error) { return Secret(s.ASFPasswordEnv, s.ASFPasswordFile) }

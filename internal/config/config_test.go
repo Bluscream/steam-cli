@@ -10,7 +10,6 @@ import (
 
 func TestProfilesAndSecretPrecedence(t *testing.T) {
 	t.Setenv("STEAM_API_KEY", "primary")
-	t.Setenv("STEAM_WEB_API_KEY", "alias")
 	t.Setenv("CUSTOM_STEAM_KEY", "custom")
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.json")
@@ -30,10 +29,6 @@ func TestProfilesAndSecretPrecedence(t *testing.T) {
 	}
 	if v, _ := s.WebKey(); v != "primary" {
 		t.Fatal("primary not preferred")
-	}
-	t.Setenv("STEAM_API_KEY", "")
-	if v, _ := s.WebKey(); v != "alias" {
-		t.Fatal("fallback alias ignored")
 	}
 	if _, e = Load(p, "missing"); e == nil {
 		t.Fatal("missing profile accepted")

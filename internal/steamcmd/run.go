@@ -38,7 +38,7 @@ func (m *Manager) Run(ctx context.Context, args []string, in io.Reader, out, err
 	// API credentials have no purpose in the Valve subprocess.
 	for _, v := range os.Environ() {
 		k, _, _ := strings.Cut(v, "=")
-		if k != "STEAM_WEB_API_KEY" && k != "STEAM_API_KEY" && k != "ASF_IPC_PASSWORD" {
+		if k != "STEAM_API_KEY" && k != "ASF_IPC_PASSWORD" {
 			c.Env = append(c.Env, v)
 		}
 	}

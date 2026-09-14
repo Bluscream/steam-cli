@@ -64,8 +64,8 @@ The CLI reads existing environment variables. It does not load `.env` files auto
 
 | Variable | Purpose |
 | --- | --- |
-| `STEAM_API_KEY` | Preferred Steam Web API key |
-| `STEAM_WEB_API_KEY` | Compatibility fallback when the preferred variable is unset |
+| `STEAM_API_KEY` | Steam Web API key |
+| `STEAM_USER_ID` | Default user SteamID64 for profile/player commands |
 | `STEAM_ACCESS_TOKEN` | Web API access token for methods a key cannot authorize |
 | `STEAM_LOGIN_SECURE` | Community session cookie; required for collection membership, subscriptions, and favorites |
 | `ASF_IPC_PASSWORD` | ASF authentication header |

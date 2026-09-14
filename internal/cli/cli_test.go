@@ -24,7 +24,6 @@ func execute(t *testing.T, args ...string) (string, error) {
 }
 func cleanEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("STEAM_WEB_API_KEY", "")
 	t.Setenv("STEAM_API_KEY", "")
 	t.Setenv("ASF_IPC_PASSWORD", "")
 	t.Setenv("STEAM_CLI_CACHE_DIR", t.TempDir())
@@ -139,7 +138,7 @@ func TestStatusAndWorkshopCLI(t *testing.T) {
 func workshopEnv(t *testing.T, api, comm string) {
 	t.Helper()
 	cleanEnv(t)
-	t.Setenv("STEAM_WEB_API_KEY", "k")
+	t.Setenv("STEAM_API_KEY", "k")
 	t.Setenv("STEAM_WEB_URL", api)
 	t.Setenv("STEAM_COMMUNITY_URL", comm)
 	t.Setenv("STEAM_LOGIN_SECURE", "76561197960287930%7C%7Ctok")
@@ -371,7 +370,7 @@ func TestStatusRawOutput(t *testing.T) {
 	}))
 	defer api.Close()
 	cleanEnv(t)
-	t.Setenv("STEAM_WEB_API_KEY", "k")
+	t.Setenv("STEAM_API_KEY", "k")
 	t.Setenv("STEAM_WEB_URL", api.URL)
 	t.Setenv("STEAM_COMMUNITY_URL", api.URL)
 
