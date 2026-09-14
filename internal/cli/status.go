@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
 	"steamcli.local/steam/internal/status"
 )
@@ -49,7 +51,7 @@ func statusCommand(o *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return o.emit(cmd, report, func(w io.Writer) { renderStatus(w, report) })
+			return o.emit(cmd, report, func(w io.Writer) { o.renderStatus(w, report) })
 		},
 	}
 
@@ -60,70 +62,118 @@ func statusCommand(o *options) *cobra.Command {
 	return cmd
 }
 
-func renderStatus(out io.Writer, report status.Report) {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "Steam Status Report - %s\n\n", report.Timestamp.Format("2006-01-02 15:04:05 UTC"))
+func (o *options) renderStatus(out io.Writer, report status.Report) {
+	fmt.Fprintf(out, "%s\n", faint("Steam status — "+report.Timestamp.Format("2006-01-02 15:04:05 UTC")))
 
-	sb.WriteString("Core Services:\n")
+	heading(out, "Core Services")
+	t := o.newTable(out)
+	t.AppendHeader(table.Row{"Service", "State", "Latency", "HTTP"})
+	t.SetColumnConfigs([]table.ColumnConfig{{Number: 3, Align: text.AlignRight}})
 	for _, ep := range report.Endpoints {
 		if ep.Error != "" {
-			fmt.Fprintf(&sb, "  %-18s: [%s] %s\n", ep.Name, strings.ToUpper(ep.Status), ep.Error)
+			t.AppendRow(table.Row{ep.Name, colorStatus(ep.Status), "", ep.Error})
 			continue
 		}
-		fmt.Fprintf(&sb, "  %-18s: [%s] %d ms (HTTP %d)\n",
-			ep.Name, strings.ToUpper(ep.Status), ep.LatencyMS, ep.HTTPCode)
+		t.AppendRow(table.Row{ep.Name, colorStatus(ep.Status),
+			fmt.Sprintf("%d ms", ep.LatencyMS), ep.HTTPCode})
 	}
+	t.Render()
 
 	if len(report.PlayerCounts) > 0 {
-		sb.WriteString("\nOnline Players:\n")
+		heading(out, "Online Players")
+		pt := o.newTable(out)
+		pt.AppendHeader(table.Row{"Title", "AppID", "Players"})
+		pt.SetColumnConfigs([]table.ColumnConfig{
+			{Number: 3, Align: text.AlignRight, Transformer: thousandsT},
+		})
 		for _, pc := range report.PlayerCounts {
 			if pc.Error != "" {
-				fmt.Fprintf(&sb, "  %-20s: unavailable (%s)\n", pc.Name, pc.Error)
+				pt.AppendRow(table.Row{pc.Name, pc.AppID, red.Sprint("unavailable")})
 				continue
 			}
-			fmt.Fprintf(&sb, "  %-20s: %s\n", pc.Name, thousands(pc.Count))
+			pt.AppendRow(table.Row{pc.Name, pc.AppID, pc.Count})
 		}
+		pt.Render()
 	}
 
 	for _, c := range report.Coordinators {
-		fmt.Fprintf(&sb, "\nGame Coordinator - %s (AppID %d):\n", c.Name, c.AppID)
+		heading(out, "Game Coordinator — %s (AppID %d)", c.Name, c.AppID)
+		ct := o.newTable(out)
+		ct.AppendHeader(table.Row{"Service", "State"})
 		if c.Error != "" {
-			fmt.Fprintf(&sb, "  unavailable (%s)\n", c.Error)
+			ct.AppendRow(table.Row{"coordinator", red.Sprint(c.Error)})
+			ct.Render()
 			continue
 		}
 		for _, svc := range sortedKeys(c.Services) {
-			fmt.Fprintf(&sb, "  %-18s: %s\n", svc, c.Services[svc])
+			ct.AppendRow(table.Row{svc, colorStatus(c.Services[svc])})
 		}
-		if len(c.Matchmaking) > 0 {
-			sb.WriteString("  Matchmaking:\n")
-			for _, k := range sortedKeys(c.Matchmaking) {
-				fmt.Fprintf(&sb, "    %-16s: %v\n", k, c.Matchmaking[k])
-			}
+		for _, k := range sortedKeys(c.Matchmaking) {
+			ct.AppendRow(table.Row{faint("mm: " + k), fmt.Sprint(c.Matchmaking[k])})
 		}
+		ct.Render()
+
 		if len(c.Datacenters) > 0 {
-			sb.WriteString("  Datacenters:\n")
-			for _, dc := range sortedKeys(c.Datacenters) {
-				fmt.Fprintf(&sb, "    %-16s: %s\n", dc, formatDatacenter(c.Datacenters[dc]))
+			heading(out, "Datacenters")
+			dt := o.newTable(out)
+			dt.AppendHeader(table.Row{"Region", "Capacity", "Load"})
+			for _, name := range sortedKeys(c.Datacenters) {
+				cap, load := datacenterFields(c.Datacenters[name])
+				dt.AppendRow(table.Row{name, colorCapacity(cap), colorStatus(load)})
 			}
+			dt.Render()
 		}
 	}
 
 	if len(report.ConnectionManagers) > 0 {
-		sb.WriteString("\nConnection Managers:\n")
+		heading(out, "Connection Managers")
+		mt := o.newTable(out)
+		mt.AppendHeader(table.Row{"Server", "State", "Latency"})
+		mt.SetColumnConfigs([]table.ColumnConfig{{Number: 3, Align: text.AlignRight}})
 		for _, cm := range report.ConnectionManagers {
 			if cm.Status == "online" {
-				fmt.Fprintf(&sb, "  %-25s: [ONLINE] %d ms\n", cm.Server, cm.LatencyMS)
+				mt.AppendRow(table.Row{cm.Server, colorStatus(cm.Status), fmt.Sprintf("%d ms", cm.LatencyMS)})
 			} else {
-				fmt.Fprintf(&sb, "  %-25s: [%s] %s\n", cm.Server, strings.ToUpper(cm.Status), cm.Error)
+				mt.AppendRow(table.Row{cm.Server, colorStatus(cm.Status), cm.Error})
 			}
 		}
+		mt.Render()
 	}
 
 	for _, w := range report.Warnings {
-		fmt.Fprintf(&sb, "\nNote: %s\n", w)
+		fmt.Fprintf(out, "%s %s\n", yellow.Sprint("Note:"), w)
 	}
+}
 
-	fmt.Fprint(out, sb.String())
+// datacenterFields pulls capacity and load out of Valve's per-region object.
+func datacenterFields(v any) (capacity, load string) {
+	obj, ok := v.(map[string]any)
+	if !ok {
+		return fmt.Sprint(v), ""
+	}
+	if c, ok := obj["capacity"]; ok {
+		capacity = fmt.Sprint(c)
+	}
+	if l, ok := obj["load"]; ok {
+		load = fmt.Sprint(l)
+	}
+	if capacity == "" && load == "" {
+		return formatDatacenter(v), ""
+	}
+	return capacity, load
+}
+
+// colorCapacity reads inversely to load: "full" capacity is healthy.
+func colorCapacity(c string) string {
+	switch strings.ToLower(c) {
+	case "full":
+		return green.Sprint("FULL")
+	case "medium":
+		return yellow.Sprint("MEDIUM")
+	case "empty", "offline":
+		return red.Sprint(strings.ToUpper(c))
+	}
+	return strings.ToUpper(c)
 }
 
 func sortedKeys[V any](m map[string]V) []string {

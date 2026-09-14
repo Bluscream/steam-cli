@@ -30,7 +30,20 @@ func configCommand(o *options) *cobra.Command {
 		if e != nil {
 			return e
 		}
-		return o.print(cmd, map[string]any{"profile": s.ProfileName, "config": s.ConfigPath, "settings": s.Profile, "data_dir": s.DataDir, "cache_dir": s.CacheDir})
+		data := map[string]any{"profile": s.ProfileName, "config": s.ConfigPath, "settings": s.Profile, "data_dir": s.DataDir, "cache_dir": s.CacheDir}
+		return o.emit(cmd, data, func(w io.Writer) {
+			t := o.newDetail(w)
+			detailRows(t,
+				kv("Profile", s.ProfileName),
+				kv("Config", s.ConfigPath),
+				kv("Data dir", s.DataDir),
+				kv("Cache dir", s.CacheDir),
+				kv("Web URL", s.WebURL),
+				kv("Community URL", s.CommunityURL),
+				kv("ASF URL", s.ASFURL),
+			)
+			t.Render()
+		})
 	}})
 	return root
 }
@@ -82,18 +95,28 @@ func doctorCommand(o *options) *cobra.Command {
 			"access_token_present": token != "", "community_session_present": cookie != "",
 			"notes": notes}
 		return o.emit(cmd, out, func(w io.Writer) {
-			t := tw(w)
-			for _, k := range []string{"version", "platform", "go", "profile", "config_path",
-				"web_url", "community_url", "asf_url", "data_dir", "cache_dir",
-				"web_key_present", "access_token_present", "community_session_present",
-				"asf_password_present", "steamcmd_installed", "steamcmd_path"} {
-				if v, ok := out[k]; ok {
-					fmt.Fprintf(t, "%s\t%v\n", k, v)
-				}
-			}
-			t.Flush()
+			t := o.newDetail(w)
+			detailRows(t,
+				kv("Version", Version),
+				kv("Platform", runtime.GOOS+"/"+runtime.GOARCH),
+				kv("Go", runtime.Version()),
+				kv("Profile", s.ProfileName),
+				kv("Config path", s.ConfigPath),
+				kv("Web URL", s.WebURL),
+				kv("Community URL", s.CommunityURL),
+				kv("ASF URL", s.ASFURL),
+				kv("Data dir", s.DataDir),
+				kv("Cache dir", s.CacheDir),
+				kv("Web API key", colorBool(key != "")),
+				kv("Access token", colorBool(token != "")),
+				kv("Community session", colorBool(cookie != "")),
+				kv("ASF password", colorBool(password != "")),
+				kv("SteamCMD installed", colorBool(installed)),
+				kv("SteamCMD path", p),
+			)
+			t.Render()
 			for _, n := range notes {
-				fmt.Fprintf(w, "\nNote: %s\n", n)
+				fmt.Fprintf(w, "%s %s\n", yellow.Sprint("Note:"), n)
 			}
 		})
 	}}

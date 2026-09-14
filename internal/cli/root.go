@@ -20,9 +20,9 @@ import (
 var Version = "0.1.0-dev"
 
 type options struct {
-	configPath, profile, format string
-	timeout                     time.Duration
-	offline, allowHTTP          bool
+	configPath, profile, format, color string
+	timeout                            time.Duration
+	offline, allowHTTP                 bool
 }
 
 func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
@@ -37,10 +37,16 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 	f.StringVarP(&o.format, "output", "o", "auto", "Output: auto, table, json, compact, raw, parsed")
 	f.DurationVar(&o.timeout, "timeout", 30*time.Second, "Timeout per HTTP attempt (not game downloads)")
 	f.BoolVar(&o.offline, "offline", false, "Disable network and external SteamCMD execution; use cached metadata")
+	f.StringVar(&o.color, "color", "auto", "Colour output: auto, always, never")
 	f.BoolVar(&o.allowHTTP, "allow-http", false, "Allow plaintext HTTP outside loopback on a trusted network")
 	r.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if o.timeout <= 0 {
 			return errors.New("--timeout must be positive")
+		}
+		switch o.color {
+		case "auto", "always", "never":
+		default:
+			return errors.New("--color must be auto, always, or never")
 		}
 		switch o.format {
 		case "auto", "table", "json", "compact", "raw", "parsed":

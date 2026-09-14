@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strconv"
 
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
 	"steamcli.local/steam/internal/library"
 )
@@ -23,20 +25,23 @@ func libraryCommand(o *options) *cobra.Command {
 			return e
 		}
 		return o.emit(cmd, v, func(w io.Writer) {
-			t := tw(w)
-			fmt.Fprintln(t, "APPID\tNAME\tSIZE\tLIBRARY")
+			t := o.newTable(w)
+			t.AppendHeader(table.Row{"AppID", "Name", "Size", "Library"})
+			t.SetColumnConfigs([]table.ColumnConfig{
+				{Number: 3, Align: text.AlignRight},
+			})
 			for _, a := range v.Apps {
 				size := ""
 				if n, err := strconv.ParseInt(a.SizeOnDisk, 10, 64); err == nil && n > 0 {
 					size = humanBytes(n)
 				}
-				fmt.Fprintf(t, "%s\t%s\t%s\t%s\n", a.AppID, truncate(a.Name, 44), size, a.Library)
+				t.AppendRow(table.Row{a.AppID, truncate(a.Name, 44), size, a.Library})
 			}
-			t.Flush()
-			fmt.Fprintf(w, "\n%d app(s) across %d librar%s.\n",
-				len(v.Apps), len(v.Libraries), map[bool]string{true: "y", false: "ies"}[len(v.Libraries) == 1])
+			t.Render()
+			fmt.Fprintf(w, "%s\n", faint(fmt.Sprintf("%d app(s) across %d librar%s.",
+				len(v.Apps), len(v.Libraries), map[bool]string{true: "y", false: "ies"}[len(v.Libraries) == 1])))
 			for _, warn := range v.Warnings {
-				fmt.Fprintf(w, "Warning: %s\n", warn)
+				fmt.Fprintf(w, "%s %s\n", yellow.Sprint("Warning:"), warn)
 			}
 		})
 	}}
@@ -84,11 +89,15 @@ func idCommand(o *options) *cobra.Command {
 			return e
 		}
 		return o.emit(cmd, v, func(w io.Writer) {
-			t := tw(w)
-			for _, k := range []string{"steamid64", "steamid3", "steamid2", "account_id", "profile_url"} {
-				fmt.Fprintf(t, "%s\t%s\n", k, v[k])
-			}
-			t.Flush()
+			t := o.newDetail(w)
+			detailRows(t,
+				kv("SteamID64", v["steamid64"]),
+				kv("SteamID3", v["steamid3"]),
+				kv("SteamID2", v["steamid2"]),
+				kv("Account ID", v["account_id"]),
+				kv("Profile URL", v["profile_url"]),
+			)
+			t.Render()
 		})
 	}}
 }

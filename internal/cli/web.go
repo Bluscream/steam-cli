@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
 	"steamcli.local/steam/internal/webapi"
 )
@@ -123,7 +124,7 @@ func webCommand(o *options) *cobra.Command {
 		// render prints a human view of the response. It reports false when
 		// the payload is not the shape it expects, so the raw JSON is printed
 		// instead of a misleading table.
-		render func(io.Writer, []byte) bool
+		render func(*options, io.Writer, []byte) bool
 	}
 	helpers := []helper{
 		{"server-info", "Steam server time and version", "ISteamWebAPIUtil", "GetServerInfo", nil, 1, 0, func([]string) url.Values { return nil }, nil},
@@ -152,7 +153,7 @@ func webCommand(o *options) *cobra.Command {
 				return e
 			}
 			if h.render != nil && o.human() {
-				if h.render(cmd.OutOrStdout(), b) {
+				if h.render(o, cmd.OutOrStdout(), b) {
 					return nil
 				}
 			}
@@ -231,7 +232,7 @@ func stamp(t *int64) string {
 
 // renderPlayers prints GetPlayerSummaries: one profile as a detail view, several
 // as a table. It reports false if the payload is not a player summary.
-func renderPlayers(w io.Writer, b []byte) bool {
+func renderPlayers(o *options, w io.Writer, b []byte) bool {
 	var res struct {
 		Response struct {
 			Players []playerSummary `json:"players"`
@@ -253,50 +254,78 @@ func renderPlayers(w io.Writer, b []byte) bool {
 	sort.Slice(players, func(i, j int) bool { return players[i].Persona < players[j].Persona })
 
 	if len(players) > 1 {
-		t := tw(w)
-		fmt.Fprintln(t, "PERSONA\tSTEAMID64\tSTATUS\tVISIBILITY\tCOUNTRY")
+		t := o.newTable(w)
+		t.AppendHeader(table.Row{"Persona", "SteamID64", "Status", "Visibility", "Country"})
 		for _, p := range players {
-			fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\n",
-				truncate(p.Persona, 28), p.SteamID, p.status(), p.visibility(), p.Country)
+			t.AppendRow(table.Row{truncate(p.Persona, 28), p.SteamID,
+				colorPersona(p), colorVisibility(p.visibility()), p.Country})
 		}
-		t.Flush()
-		fmt.Fprintf(w, "\n%d profile(s).\n", len(players))
+		t.Render()
+		fmt.Fprintln(w, faint(fmt.Sprintf("%d profile(s).", len(players))))
 		return true
 	}
 
 	p := players[0]
-	t := tw(w)
-	row := func(k, v string) {
-		if v != "" {
-			fmt.Fprintf(t, "%s\t%s\n", k, v)
-		}
+	t := o.newDetail(w)
+	rows := []([2]string){
+		kv("Persona", p.Persona),
+		kv("Real name", p.RealName),
+		kv("SteamID64", p.SteamID),
 	}
-	row("Persona", p.Persona)
-	row("Real name", p.RealName)
-	row("SteamID64", p.SteamID)
 	if ids, err := convertID(p.SteamID); err == nil {
-		row("SteamID3", ids["steamid3"])
-		row("SteamID2", ids["steamid2"])
+		rows = append(rows, kv("SteamID3", ids["steamid3"]), kv("SteamID2", ids["steamid2"]))
 	}
-	row("Status", p.status())
+	rows = append(rows, kv("Status", colorPersona(p)))
 	if p.GameName != "" {
-		row("Game", p.GameName+gameSuffix(p))
-		row("Game server", p.GameServer)
+		rows = append(rows, kv("Game", p.GameName+gameSuffix(p)), kv("Game server", p.GameServer))
 	}
-	row("Visibility", p.visibility())
+	rows = append(rows, kv("Visibility", colorVisibility(p.visibility())))
 	if p.Configured != nil && *p.Configured == 0 {
-		row("Profile", "not set up")
+		rows = append(rows, kv("Profile", yellow.Sprint("not set up")))
 	}
-	row("Country", locality(p))
-	row("Created", stamp(p.Created))
+	rows = append(rows,
+		kv("Country", locality(p)),
+		kv("Created", stamp(p.Created)),
+	)
 	if p.GameName == "" {
-		row("Last seen", stamp(p.LastLogoff))
+		rows = append(rows, kv("Last seen", stamp(p.LastLogoff)))
 	}
-	row("Primary group", p.ClanID)
-	row("Profile URL", p.ProfileURL)
-	row("Avatar", p.Avatar)
-	t.Flush()
+	rows = append(rows,
+		kv("Primary group", p.ClanID),
+		kv("Profile URL", p.ProfileURL),
+		kv("Avatar", p.Avatar),
+	)
+	detailRows(t, rows...)
+	t.Render()
 	return true
+}
+
+// colorPersona greens an online player, greens-with-emphasis one in a game,
+// and dims an offline one.
+func colorPersona(p playerSummary) string {
+	s := p.status()
+	if p.GameName != "" {
+		return green.Sprint(s)
+	}
+	if p.State != nil && *p.State == 0 {
+		return faint(s)
+	}
+	if p.State != nil && *p.State != 0 {
+		return green.Sprint(s)
+	}
+	return s
+}
+
+func colorVisibility(v string) string {
+	switch v {
+	case "public":
+		return green.Sprint(v)
+	case "private":
+		return red.Sprint(v)
+	case "friends only":
+		return yellow.Sprint(v)
+	}
+	return v
 }
 
 func gameSuffix(p playerSummary) string {

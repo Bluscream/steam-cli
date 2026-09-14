@@ -2,9 +2,10 @@ package cli
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
 	"steamcli.local/steam/internal/asf"
 )
@@ -77,13 +78,20 @@ func asfCommand(o *options) *cobra.Command {
 			return emit(cmd, b, e)
 		}
 		w := cmd.OutOrStdout()
-		t := tw(w)
-		fmt.Fprintln(t, "BOT\tCONNECTED\tFARMING\tGAMES LEFT\tCARDS LEFT\tSTEAMID")
+		t := o.newTable(w)
+		t.AppendHeader(table.Row{"Bot", "Connected", "Farming", "Games", "Cards", "SteamID64"})
+		t.SetColumnConfigs([]table.ColumnConfig{
+			{Number: 4, Align: text.AlignRight}, {Number: 5, Align: text.AlignRight},
+		})
 		for _, s := range summaries {
-			fmt.Fprintf(t, "%s\t%t\t%t\t%d\t%d\t%s\n",
-				s.Name, s.Connected, s.Farming, s.GamesRemaining, s.CardsRemaining, s.SteamID)
+			id := s.SteamID
+			if id == "0" || id == "" {
+				id = faint("—")
+			}
+			t.AppendRow(table.Row{s.Name, colorBool(s.Connected), colorBool(s.Farming),
+				s.GamesRemaining, s.CardsRemaining, id})
 		}
-		t.Flush()
+		t.Render()
 		return nil
 	}}
 	command := &cobra.Command{Use: "command COMMAND...", Short: "Execute an ASF command as IPC owner (can change account state)", Args: cobra.MinimumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {

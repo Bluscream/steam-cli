@@ -1,0 +1,130 @@
+package cli
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
+	"golang.org/x/term"
+)
+
+// colorMode controls ANSI output. "auto" enables colour only when stdout is a
+// terminal and NO_COLOR is unset, so redirected or piped output stays clean and
+// remains safe to parse.
+func (o *options) applyColor(out io.Writer) {
+	switch o.color {
+	case "always":
+		text.EnableColors()
+		return
+	case "never":
+		text.DisableColors()
+		return
+	}
+	if _, ok := os.LookupEnv("NO_COLOR"); ok {
+		text.DisableColors()
+		return
+	}
+	f, isFile := out.(*os.File)
+	if isFile && term.IsTerminal(int(f.Fd())) {
+		text.EnableColors()
+		return
+	}
+	text.DisableColors()
+}
+
+// newTable returns a table bound to w, styled consistently across commands.
+func (o *options) newTable(w io.Writer) table.Writer {
+	o.applyColor(w)
+	t := table.NewWriter()
+	t.SetOutputMirror(w)
+
+	s := table.StyleRounded
+	s.Options.SeparateRows = false
+	s.Format.Header = text.FormatUpper
+	s.Color.Header = text.Colors{text.Bold}
+	t.SetStyle(s)
+	return t
+}
+
+// newDetail returns a two-column key/value table without a header row, for
+// showing one object rather than a list.
+func (o *options) newDetail(w io.Writer) table.Writer {
+	t := o.newTable(w)
+	t.Style().Options.SeparateHeader = false
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{Number: 1, Colors: text.Colors{text.FgCyan}},
+	})
+	return t
+}
+
+// detailRows appends only the pairs that have a value, so a detail view does
+// not show rows the API did not return.
+func detailRows(t table.Writer, pairs ...[2]string) {
+	for _, p := range pairs {
+		if strings.TrimSpace(p[1]) != "" {
+			t.AppendRow(table.Row{p[0], p[1]})
+		}
+	}
+}
+
+func kv(k, v string) [2]string { return [2]string{k, v} }
+
+// --- semantic colouring -----------------------------------------------------
+
+var (
+	green  = text.Colors{text.FgGreen}
+	red    = text.Colors{text.FgRed}
+	yellow = text.Colors{text.FgYellow}
+	dim    = text.Colors{text.Faint}
+)
+
+// colorStatus renders a service or connection state in a colour matching its
+// severity. The text is returned unchanged when colour is disabled.
+func colorStatus(s string) string {
+	switch strings.ToLower(s) {
+	case "normal", "online", "ok", "running", "installed":
+		return green.Sprint(strings.ToUpper(s))
+	case "slow", "idle", "installing", "delayed":
+		return yellow.Sprint(strings.ToUpper(s))
+	case "down", "unreachable", "offline", "error", "failed", "suspended":
+		return red.Sprint(strings.ToUpper(s))
+	}
+	return strings.ToUpper(s)
+}
+
+func colorBool(b bool) string {
+	if b {
+		return green.Sprint("yes")
+	}
+	return red.Sprint("no")
+}
+
+// colorOK marks success and failure in a batch result.
+func colorOK(ok bool, okText, failText string) string {
+	if ok {
+		return green.Sprint(okText)
+	}
+	return red.Sprint(failText)
+}
+
+func faint(s string) string { return dim.Sprint(s) }
+
+// thousandsT formats a numeric cell with group separators.
+func thousandsT(v any) string {
+	switch n := v.(type) {
+	case int:
+		return thousands(n)
+	case int64:
+		return thousands(int(n))
+	}
+	return fmt.Sprint(v)
+}
+
+// heading prints a section title above a table. go-pretty's own SetTitle wraps
+// to the table's width, which breaks longer titles mid-word.
+func heading(w io.Writer, format string, args ...any) {
+	fmt.Fprintf(w, "\n%s\n", text.Colors{text.Bold}.Sprintf(format, args...))
+}

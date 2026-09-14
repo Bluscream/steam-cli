@@ -379,7 +379,7 @@ func TestStatusRawOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v\n%s", err, out)
 	}
-	for _, want := range []string{"Core Services", "Online Players", "1,234,567", "Datacenters", "capacity=high"} {
+	for _, want := range []string{"Core Services", "Online Players", "1,234,567", "Datacenters", "HIGH"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("raw output missing %q:\n%s", want, out)
 		}
@@ -716,7 +716,7 @@ func TestAutoRendersWhereARendererExists(t *testing.T) {
 	if strings.HasPrefix(strings.TrimSpace(out), "{") {
 		t.Errorf("default output should be rendered, not JSON:\n%s", out)
 	}
-	if !strings.Contains(out, "steamid64") || !strings.Contains(out, "STEAM_0:0:11101") {
+	if !strings.Contains(strings.ToLower(out), "steamid64") || !strings.Contains(out, "STEAM_0:0:11101") {
 		t.Errorf("rendered output missing fields:\n%s", out)
 	}
 

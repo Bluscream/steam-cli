@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
 	"steamcli.local/steam/internal/community"
 	"steamcli.local/steam/internal/library"
@@ -170,7 +172,7 @@ func workshopCommand(o *options) *cobra.Command {
 				return errors.New("no items to subscribe to; pass ITEMIDs or use --from-collection, --from-favorites, or --from-installed")
 			}
 			results := wc.Subscribe(cmd.Context(), appID, items)
-			if err := o.emit(cmd, summarize(results), renderBatch(results)); err != nil {
+			if err := o.emit(cmd, summarize(results), o.renderBatch(results)); err != nil {
 				return err
 			}
 			return batchErr(results)
@@ -205,7 +207,7 @@ func workshopCommand(o *options) *cobra.Command {
 				return errors.New("no items to unsubscribe from; pass ITEMIDs or use --from-collection or --all")
 			}
 			results := wc.Unsubscribe(cmd.Context(), appID, items)
-			if err := o.emit(cmd, summarize(results), renderBatch(results)); err != nil {
+			if err := o.emit(cmd, summarize(results), o.renderBatch(results)); err != nil {
 				return err
 			}
 			return batchErr(results)
@@ -230,7 +232,7 @@ func workshopCommand(o *options) *cobra.Command {
 				return err
 			}
 			if !withItemDetails || len(coll.Children) == 0 {
-				return o.emit(cmd, coll, func(w io.Writer) { renderCollection(w, coll, nil) })
+				return o.emit(cmd, coll, func(w io.Writer) { o.renderCollection(w, coll, nil) })
 			}
 			childIDs := make([]string, len(coll.Children))
 			for i, ch := range coll.Children {
@@ -241,7 +243,7 @@ func workshopCommand(o *options) *cobra.Command {
 				return fmt.Errorf("fetch item details (use --items=false to skip): %w", err)
 			}
 			return o.emit(cmd, map[string]any{"collection": coll, "items": details},
-				func(w io.Writer) { renderCollection(w, coll, details) })
+				func(w io.Writer) { o.renderCollection(w, coll, details) })
 		},
 	}
 	collection.Flags().BoolVar(&withItemDetails, "items", true, "Fetch full metadata for all items in the collection")
@@ -277,21 +279,21 @@ func workshopCommand(o *options) *cobra.Command {
 					out["details"] = details
 				}
 				return o.emit(cmd, out, func(w io.Writer) {
-					t := tw(w)
+					t := o.newTable(w)
 					if details != nil {
-						fmt.Fprintln(t, "ID\tTITLE\tUPDATED")
+						t.AppendHeader(table.Row{"ID", "Title", "Updated"})
 						for _, id := range ids {
 							d := details[id]
-							fmt.Fprintf(t, "%s\t%s\t%s\n", id, truncate(d.Title, 56), unixDate(d.TimeUpdated))
+							t.AppendRow(table.Row{id, truncate(d.Title, 56), unixDate(d.TimeUpdated)})
 						}
 					} else {
-						fmt.Fprintln(t, "ID")
+						t.AppendHeader(table.Row{"ID"})
 						for _, id := range ids {
-							fmt.Fprintf(t, "%s\n", id)
+							t.AppendRow(table.Row{id})
 						}
 					}
-					t.Flush()
-					fmt.Fprintf(w, "\n%d item(s) for AppID %d.\n", len(ids), appID)
+					t.Render()
+					fmt.Fprintf(w, "%s\n", faint(fmt.Sprintf("%d item(s) for AppID %d.", len(ids), appID)))
 				})
 			},
 		}
@@ -338,12 +340,13 @@ func workshopCommand(o *options) *cobra.Command {
 			}
 			if !installedDetails {
 				return o.emit(cmd, apps, func(w io.Writer) {
-					t := tw(w)
-					fmt.Fprintln(t, "APPID\tITEMS")
+					t := o.newTable(w)
+					t.AppendHeader(table.Row{"AppID", "Items"})
+					t.SetColumnConfigs([]table.ColumnConfig{{Number: 2, Align: text.AlignRight}})
 					for _, a := range apps {
-						fmt.Fprintf(t, "%s\t%d\n", a.AppID, a.Total)
+						t.AppendRow(table.Row{a.AppID, a.Total})
 					}
-					t.Flush()
+					t.Render()
 				})
 			}
 			wc, err := workshopClient()
@@ -359,14 +362,14 @@ func workshopCommand(o *options) *cobra.Command {
 				return fmt.Errorf("fetch item details (omit --details to skip): %w", err)
 			}
 			return o.emit(cmd, map[string]any{"apps": apps, "items": details}, func(w io.Writer) {
-				t := tw(w)
-				fmt.Fprintln(t, "APPID\tITEM\tTITLE")
+				t := o.newTable(w)
+				t.AppendHeader(table.Row{"AppID", "Item", "Title"})
 				for _, a := range apps {
 					for _, id := range a.Items {
-						fmt.Fprintf(t, "%s\t%s\t%s\n", a.AppID, id, truncate(details[id].Title, 56))
+						t.AppendRow(table.Row{a.AppID, id, truncate(details[id].Title, 56)})
 					}
 				}
-				t.Flush()
+				t.Render()
 			})
 		},
 	}
@@ -423,15 +426,18 @@ func workshopCommand(o *options) *cobra.Command {
 					"count": len(items),
 					key:     items,
 				}, func(w io.Writer) {
-					t := tw(w)
-					fmt.Fprintln(t, "ID\tTITLE\tSUBSCRIBERS\tFAVORITES\tUPDATED")
+					t := o.newTable(w)
+					t.AppendHeader(table.Row{"ID", "Title", "Subscribers", "Favorites", "Updated"})
+					t.SetColumnConfigs([]table.ColumnConfig{
+						{Number: 3, Align: text.AlignRight, Transformer: thousandsT},
+						{Number: 4, Align: text.AlignRight, Transformer: thousandsT},
+					})
 					for _, it := range items {
-						fmt.Fprintf(t, "%s\t%s\t%d\t%d\t%s\n",
-							it.PublishedFileID, truncate(it.Title, 48),
-							it.Subscriptions, it.Favorites, unixDate(it.TimeUpdated))
+						t.AppendRow(table.Row{it.PublishedFileID, truncate(it.Title, 48),
+							it.Subscriptions, it.Favorites, unixDate(it.TimeUpdated)})
 					}
-					t.Flush()
-					fmt.Fprintf(w, "\n%d of %d shown.\n", len(items), total)
+					t.Render()
+					fmt.Fprintf(w, "%s\n", faint(fmt.Sprintf("%d of %d shown.", len(items), total)))
 				})
 			},
 		}
@@ -566,7 +572,7 @@ func workshopCommand(o *options) *cobra.Command {
 				} else {
 					results = wc.RemoveItems(cmd.Context(), args[1], items)
 				}
-				if err := o.emit(cmd, summarize(results), renderBatch(results)); err != nil {
+				if err := o.emit(cmd, summarize(results), o.renderBatch(results)); err != nil {
 					return err
 				}
 				return batchErr(results)
@@ -635,57 +641,67 @@ func unixDate(t int64) string {
 	return time.Unix(t, 0).UTC().Format("2006-01-02")
 }
 
-func renderBatch(results []workshop.BatchResult) func(io.Writer) {
+func (o *options) renderBatch(results []workshop.BatchResult) func(io.Writer) {
 	return func(w io.Writer) {
-		t := tw(w)
-		fmt.Fprintln(t, "ITEM\tRESULT")
+		t := o.newTable(w)
+		t.AppendHeader(table.Row{"Item", "Result"})
 		ok := 0
 		for _, r := range results {
 			if r.Success {
 				ok++
-				fmt.Fprintf(t, "%s\tok\n", r.PublishedFileID)
+				t.AppendRow(table.Row{r.PublishedFileID, colorOK(true, "ok", "")})
 			} else {
-				fmt.Fprintf(t, "%s\t%s\n", r.PublishedFileID, r.Error)
+				t.AppendRow(table.Row{r.PublishedFileID, colorOK(false, "", r.Error)})
 			}
 		}
-		t.Flush()
-		fmt.Fprintf(w, "\n%d succeeded, %d failed.\n", ok, len(results)-ok)
+		t.Render()
+		summary := fmt.Sprintf("%d succeeded, %d failed.", ok, len(results)-ok)
+		if ok == len(results) {
+			fmt.Fprintln(w, green.Sprint(summary))
+		} else if ok == 0 {
+			fmt.Fprintln(w, red.Sprint(summary))
+		} else {
+			fmt.Fprintln(w, yellow.Sprint(summary))
+		}
 	}
 }
 
-func renderCollection(w io.Writer, coll workshop.CollectionDetails, details map[string]workshop.PublishedFileDetails) {
-	t := tw(w)
-	if d := coll.Details; d != nil {
-		fmt.Fprintf(t, "Title\t%s\n", d.Title)
-		fmt.Fprintf(t, "ID\t%s\n", coll.PublishedFileID)
-		fmt.Fprintf(t, "Creator\t%s\n", d.Creator)
-		fmt.Fprintf(t, "AppID\t%d\n", d.ConsumerAppID)
-		fmt.Fprintf(t, "Favorites\t%d\n", d.Favorites)
-		fmt.Fprintf(t, "Views\t%d\n", d.Views)
-		fmt.Fprintf(t, "Updated\t%s\n", unixDate(d.TimeUpdated))
+func (o *options) renderCollection(w io.Writer, coll workshop.CollectionDetails, details map[string]workshop.PublishedFileDetails) {
+	d := coll.Details
+	t := o.newDetail(w)
+	if d != nil {
+		detailRows(t,
+			kv("Title", d.Title),
+			kv("ID", coll.PublishedFileID),
+			kv("Creator", d.Creator),
+			kv("AppID", fmt.Sprint(d.ConsumerAppID)),
+			kv("Favorites", thousands(d.Favorites)),
+			kv("Views", thousands(d.Views)),
+			kv("Updated", unixDate(d.TimeUpdated)),
+			kv("Children", fmt.Sprint(len(coll.Children))),
+			kv("URL", "https://steamcommunity.com/sharedfiles/filedetails/?id="+coll.PublishedFileID),
+		)
 	} else {
-		fmt.Fprintf(t, "ID\t%s\n", coll.PublishedFileID)
+		detailRows(t, kv("ID", coll.PublishedFileID), kv("Children", fmt.Sprint(len(coll.Children))))
 	}
-	fmt.Fprintf(t, "Children\t%d\n", len(coll.Children))
-	t.Flush()
+	t.Render()
 
 	if len(coll.Children) == 0 {
 		return
 	}
-	fmt.Fprintln(w)
-	t = tw(w)
+	ct := o.newTable(w)
 	if details != nil {
-		fmt.Fprintln(t, "ITEM\tTITLE\tUPDATED")
+		ct.AppendHeader(table.Row{"Item", "Title", "Updated"})
 	} else {
-		fmt.Fprintln(t, "ITEM\tSORT")
+		ct.AppendHeader(table.Row{"Item", "Sort"})
 	}
 	for _, ch := range coll.Children {
 		if details != nil {
-			d := details[ch.PublishedFileID]
-			fmt.Fprintf(t, "%s\t%s\t%s\n", ch.PublishedFileID, truncate(d.Title, 56), unixDate(d.TimeUpdated))
+			cd := details[ch.PublishedFileID]
+			ct.AppendRow(table.Row{ch.PublishedFileID, truncate(cd.Title, 56), unixDate(cd.TimeUpdated)})
 		} else {
-			fmt.Fprintf(t, "%s\t%d\n", ch.PublishedFileID, ch.SortOrder)
+			ct.AppendRow(table.Row{ch.PublishedFileID, ch.SortOrder})
 		}
 	}
-	t.Flush()
+	ct.Render()
 }
