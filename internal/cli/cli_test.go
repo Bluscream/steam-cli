@@ -1134,4 +1134,18 @@ func TestWebNewsResolvesAppName(t *testing.T) {
 	}
 }
 
+func TestGlobalSearchCommand(t *testing.T) {
+	cleanEnv(t)
+	out, err := execute(t, "search", "vrchat")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(out), "vrchat") {
+		t.Errorf("expected search output to contain 'vrchat', got:\n%s", out)
+	}
+	if !strings.Contains(out, "Steam Store Apps") && !strings.Contains(out, "Workshop Items") {
+		t.Errorf("expected category table header, got:\n%s", out)
+	}
+}
+
 

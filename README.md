@@ -113,6 +113,7 @@ Only `*_env` / `*_file` keys appear here; credential values never do. See [confi
 ./bin/steamcli --offline web methods IPlayerService
 ./bin/steamcli web methods --refresh
 
+./bin/steamcli search vrchat                         # global search across store, local, owned, workshop, players
 ./bin/steamcli apps vrchat                           # search store apps by name
 ./bin/steamcli web news vrchat                       # resolves app name to AppID
 ./bin/steamcli web players cs2                       # resolves app name to AppID

@@ -10,9 +10,14 @@ import (
 	"strconv"
 	"strings"
 
+	"sync"
+
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
+	"steamcli.local/steam/internal/community"
+	"steamcli.local/steam/internal/library"
+	"steamcli.local/steam/internal/webapi"
 )
 
 // StoreAppItem represents an app returned by the Steam Store search API.
@@ -147,5 +152,368 @@ func appsCommand(o *options) *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVarP(&limit, "limit", "n", 25, "Maximum number of search results to show")
+	return cmd
+}
+
+// GlobalSearchResults holds results from all categories for the global search command.
+type GlobalSearchResults struct {
+	Query         string                  `json:"query"`
+	StoreApps     []StoreAppItem          `json:"store_apps,omitempty"`
+	LocalApps     []library.App           `json:"local_apps,omitempty"`
+	OwnedGames    []ownedGame             `json:"owned_games,omitempty"`
+	Players       []playerSummary         `json:"players,omitempty"`
+	WorkshopItems []searchWorkshopItem    `json:"workshop_items,omitempty"`
+}
+
+type searchWorkshopItem struct {
+	ID            string `json:"id"`
+	Title         string `json:"title"`
+	AppID         int    `json:"appid"`
+	AppName       string `json:"app_name,omitempty"`
+	Subscriptions int    `json:"subscriptions"`
+	Favorites     int    `json:"favorites"`
+	Updated       string `json:"updated"`
+}
+
+func searchCommand(o *options) *cobra.Command {
+	var maxPerType int
+	cmd := &cobra.Command{
+		Use:   "search QUERY",
+		Short: "Search games, workshop items, players, and local library across Steam",
+		Long: "Search games, workshop items, players, and local library across Steam.\n\n" +
+			"Aggregates results from Steam Store apps, Workshop items, locally installed\n" +
+			"games, owned library games, and player vanity names. Displays separate tables\n" +
+			"for each category that returned matches (empty categories are omitted).",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := strings.TrimSpace(args[0])
+			if q == "" {
+				return errors.New("search query cannot be empty")
+			}
+			if maxPerType <= 0 {
+				maxPerType = 100
+			}
+			ctx := cmd.Context()
+			res := GlobalSearchResults{Query: q}
+			var wg sync.WaitGroup
+			var mu sync.Mutex
+
+			// 1. Steam Store Apps
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				apps, err := o.searchStoreApps(ctx, q)
+				if err == nil && len(apps) > 0 {
+					if len(apps) > maxPerType {
+						apps = apps[:maxPerType]
+					}
+					mu.Lock()
+					res.StoreApps = apps
+					mu.Unlock()
+				}
+			}()
+
+			// 2. Local installed games
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				rep, err := library.Scan(library.Defaults())
+				if err == nil && len(rep.Apps) > 0 {
+					qLower := strings.ToLower(q)
+					var matched []library.App
+					for _, a := range rep.Apps {
+						if strings.Contains(strings.ToLower(a.Name), qLower) || a.AppID == q {
+							matched = append(matched, a)
+							if len(matched) >= maxPerType {
+								break
+							}
+						}
+					}
+					if len(matched) > 0 {
+						mu.Lock()
+						res.LocalApps = matched
+						mu.Unlock()
+					}
+				}
+			}()
+
+			// 3. Workshop items across Steam
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				s, err := o.settings()
+				if err != nil {
+					return
+				}
+				key, _ := s.WebKey()
+				token, _ := s.AccessToken()
+				wc := &webapi.Client{HTTP: o.http(), BaseURL: s.WebURL, Key: key, CacheDir: s.CacheDir, AccessToken: token}
+				numToFetch := maxPerType
+				if numToFetch > 100 {
+					numToFetch = 100
+				}
+				params := url.Values{
+					"query_type":     {"0"},
+					"search_text":    {q},
+					"numperpage":     {strconv.Itoa(numToFetch)},
+					"return_details": {"true"},
+				}
+				b, err := wc.Call(ctx, "IPublishedFileService", "QueryFiles", 1, "GET", params)
+				if err != nil {
+					return
+				}
+				var raw struct {
+					Response struct {
+						PublishedFileDetails []struct {
+							PublishedFileID string `json:"publishedfileid"`
+							ConsumerAppID   int    `json:"consumer_appid"`
+							Title           string `json:"title"`
+							AppName         string `json:"app_name"`
+							Subscriptions   int    `json:"subscriptions"`
+							Favorited       int    `json:"favorited"`
+							TimeUpdated     int64  `json:"time_updated"`
+						} `json:"publishedfiledetails"`
+					} `json:"response"`
+				}
+				if json.Unmarshal(b, &raw) == nil && len(raw.Response.PublishedFileDetails) > 0 {
+					var items []searchWorkshopItem
+					for _, it := range raw.Response.PublishedFileDetails {
+						items = append(items, searchWorkshopItem{
+							ID:            it.PublishedFileID,
+							Title:         it.Title,
+							AppID:         it.ConsumerAppID,
+							AppName:       it.AppName,
+							Subscriptions: it.Subscriptions,
+							Favorites:     it.Favorited,
+							Updated:       unixDate(it.TimeUpdated),
+						})
+					}
+					mu.Lock()
+					res.WorkshopItems = items
+					mu.Unlock()
+				}
+			}()
+
+			// 4. Player / Vanity URL resolution & summary
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				s, err := o.settings()
+				if err != nil {
+					return
+				}
+				key, err := s.WebKey()
+				if err != nil || key == "" {
+					return
+				}
+				token, _ := s.AccessToken()
+				wc := &webapi.Client{HTTP: o.http(), BaseURL: s.WebURL, Key: key, CacheDir: s.CacheDir, AccessToken: token}
+
+				// Check if query is directly a SteamID or vanity name
+				steamID := ""
+				if _, err := strconv.ParseUint(q, 10, 64); err == nil && len(q) == 17 {
+					steamID = q
+				} else {
+					b, err := wc.Call(ctx, "ISteamUser", "ResolveVanityURL", 1, "GET", url.Values{"vanityurl": {q}})
+					if err == nil {
+						var resVanity struct {
+							Response struct {
+								SteamID string `json:"steamid"`
+								Success int    `json:"success"`
+							} `json:"response"`
+						}
+						if json.Unmarshal(b, &resVanity) == nil && resVanity.Response.Success == 1 {
+							steamID = resVanity.Response.SteamID
+						}
+					}
+				}
+
+				if steamID != "" {
+					b, err := wc.Call(ctx, "ISteamUser", "GetPlayerSummaries", 2, "GET", url.Values{"steamids": {steamID}})
+					if err == nil {
+						var resPlayers struct {
+							Response struct {
+								Players []playerSummary `json:"players"`
+							} `json:"response"`
+						}
+						if json.Unmarshal(b, &resPlayers) == nil && len(resPlayers.Response.Players) > 0 {
+							mu.Lock()
+							res.Players = resPlayers.Response.Players
+							mu.Unlock()
+						}
+					}
+				}
+			}()
+
+			// 5. Owned games if key & user are available
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				s, err := o.settings()
+				if err != nil {
+					return
+				}
+				key, err := s.WebKey()
+				if err != nil || key == "" {
+					return
+				}
+				userSteamID := ""
+				if id, err := s.SteamUserID(); err == nil && id != "" {
+					userSteamID = id
+				} else if cLogin, err := s.CommunityLoginSecure(); err == nil && cLogin != "" {
+					userSteamID, _ = (&community.Client{LoginSecure: cLogin}).SteamID()
+				}
+				if userSteamID == "" {
+					return
+				}
+				token, _ := s.AccessToken()
+				wc := &webapi.Client{HTTP: o.http(), BaseURL: s.WebURL, Key: key, CacheDir: s.CacheDir, AccessToken: token}
+				params := url.Values{
+					"steamid":                  {userSteamID},
+					"include_appinfo":          {"1"},
+					"include_played_free_games": {"1"},
+				}
+				b, err := wc.Call(ctx, "IPlayerService", "GetOwnedGames", 1, "GET", params)
+				if err != nil {
+					return
+				}
+				var raw struct {
+					Response struct {
+						Games []ownedGame `json:"games"`
+					} `json:"response"`
+				}
+				if json.Unmarshal(b, &raw) == nil && len(raw.Response.Games) > 0 {
+					qLower := strings.ToLower(q)
+					var matched []ownedGame
+					for _, g := range raw.Response.Games {
+						if strings.Contains(strings.ToLower(g.Name), qLower) || strconv.Itoa(g.AppID) == q {
+							matched = append(matched, g)
+							if len(matched) >= maxPerType {
+								break
+							}
+						}
+					}
+					if len(matched) > 0 {
+						mu.Lock()
+						res.OwnedGames = matched
+						mu.Unlock()
+					}
+				}
+			}()
+
+			wg.Wait()
+
+			return o.emit(cmd, res, func(w io.Writer) {
+				hasAny := false
+
+				// Store apps table
+				if len(res.StoreApps) > 0 {
+					hasAny = true
+					o.heading(w, "Steam Store Apps")
+					t := o.newTable(w)
+					t.AppendHeader(table.Row{"AppID", "Name", "Platforms"})
+					t.SetColumnConfigs([]table.ColumnConfig{{Number: 1, Align: text.AlignRight}})
+					for _, it := range res.StoreApps {
+						var plats []string
+						if it.Platforms["windows"] {
+							plats = append(plats, "Win")
+						}
+						if it.Platforms["mac"] {
+							plats = append(plats, "Mac")
+						}
+						if it.Platforms["linux"] {
+							plats = append(plats, "Linux")
+						}
+						pStr := strings.Join(plats, "/")
+						if pStr == "" {
+							pStr = "-"
+						}
+						t.AppendRow(table.Row{it.ID, truncate(it.Name, 50), pStr})
+					}
+					o.renderTable(t)
+					if o.format != "csv" {
+						fmt.Fprintf(w, "%s\n\n", faint(fmt.Sprintf("%d store app(s) found.", len(res.StoreApps))))
+					}
+				}
+
+				// Local apps table
+				if len(res.LocalApps) > 0 {
+					hasAny = true
+					o.heading(w, "Local Library Games")
+					t := o.newTable(w)
+					t.AppendHeader(table.Row{"AppID", "Name", "Install Directory"})
+					t.SetColumnConfigs([]table.ColumnConfig{{Number: 1, Align: text.AlignRight}})
+					for _, it := range res.LocalApps {
+						t.AppendRow(table.Row{it.AppID, truncate(it.Name, 40), it.InstallDir})
+					}
+					o.renderTable(t)
+					if o.format != "csv" {
+						fmt.Fprintf(w, "%s\n\n", faint(fmt.Sprintf("%d local game(s) matched.", len(res.LocalApps))))
+					}
+				}
+
+				// Owned games table
+				if len(res.OwnedGames) > 0 {
+					hasAny = true
+					o.heading(w, "Owned Account Games")
+					t := o.newTable(w)
+					t.AppendHeader(table.Row{"AppID", "Name", "Playtime"})
+					t.SetColumnConfigs([]table.ColumnConfig{
+						{Number: 1, Align: text.AlignRight},
+						{Number: 3, Align: text.AlignRight},
+					})
+					for _, it := range res.OwnedGames {
+						t.AppendRow(table.Row{it.AppID, truncate(it.Name, 50), formatPlaytime(it.PlaytimeForever)})
+					}
+					o.renderTable(t)
+					if o.format != "csv" {
+						fmt.Fprintf(w, "%s\n\n", faint(fmt.Sprintf("%d owned game(s) matched.", len(res.OwnedGames))))
+					}
+				}
+
+				// Players table
+				if len(res.Players) > 0 {
+					hasAny = true
+					o.heading(w, "Community Players")
+					t := o.newTable(w)
+					t.AppendHeader(table.Row{"Persona", "SteamID64", "Profile URL"})
+					for _, p := range res.Players {
+						t.AppendRow(table.Row{p.Persona, p.SteamID, p.ProfileURL})
+					}
+					o.renderTable(t)
+					if o.format != "csv" {
+						fmt.Fprintf(w, "%s\n\n", faint(fmt.Sprintf("%d player(s) found.", len(res.Players))))
+					}
+				}
+
+				// Workshop items table
+				if len(res.WorkshopItems) > 0 {
+					hasAny = true
+					o.heading(w, "Workshop Items")
+					t := o.newTable(w)
+					t.AppendHeader(table.Row{"ID", "Title", "Game", "Subscribers", "Updated"})
+					t.SetColumnConfigs([]table.ColumnConfig{
+						{Number: 4, Align: text.AlignRight, Transformer: thousandsT},
+					})
+					for _, it := range res.WorkshopItems {
+						gameName := it.AppName
+						if gameName == "" && it.AppID > 0 {
+							gameName = strconv.Itoa(it.AppID)
+						}
+						t.AppendRow(table.Row{it.ID, truncate(it.Title, 40), truncate(gameName, 20), it.Subscriptions, it.Updated})
+					}
+					o.renderTable(t)
+					if o.format != "csv" {
+						fmt.Fprintf(w, "%s\n\n", faint(fmt.Sprintf("%d workshop item(s) found.", len(res.WorkshopItems))))
+					}
+				}
+
+				if !hasAny {
+					fmt.Fprintf(w, "No results found for %q across Steam apps, workshop items, or accounts.\n", q)
+				}
+			})
+		},
+	}
+	cmd.Flags().IntVarP(&maxPerType, "limit", "n", 100, "Maximum results per category (up to 100)")
 	return cmd
 }
