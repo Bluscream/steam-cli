@@ -211,7 +211,7 @@ With `STEAM_ASF_URL` and `ASF_IPC_PASSWORD` configured:
 
 `asf command`, bot controls, and arbitrary write calls can change account state; they execute exactly when requested. The CLI does not retry write requests. Token output is sensitive and goes to stdout only when requested.
 
-Authentication uses the `Authentication` header, never a password query string added by the CLI. Reverse-proxy URL prefixes are preserved. Plain HTTP is permitted on loopback; add `--allow-http` for an explicitly trusted LAN endpoint. Both user-supplied LAN ASF instances were tested with this option and header authentication.
+Authentication uses the `Authentication` header, never a password query string added by the CLI. Reverse-proxy URL prefixes are preserved. Plain HTTP is permitted on loopback; add `--allow-http` for an explicitly trusted LAN endpoint, or set `"allow_http": true` in the profile to avoid repeating the flag for a LAN instance. The flag can enable plaintext for a single run but never disables what the profile allows. Both user-supplied LAN ASF instances were tested with this option and header authentication.
 
 `asf schema` retrieves `/swagger/ASF/swagger.json` from your instance, covering its version and plugins. Generic `asf call` reaches endpoints without requiring a CLI release. A response with `Success:false` prints its JSON and exits nonzero. The Web API and ASF are separate authentication domains.
 

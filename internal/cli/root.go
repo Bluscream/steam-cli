@@ -49,8 +49,16 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 	r.AddCommand(statusCommand(o), workshopCommand(o), webCommand(o), asfCommand(o), cmdCommand(o), configCommand(o), doctorCommand(o), libraryCommand(o), idCommand(o))
 	return r
 }
-func (o *options) settings() (config.Settings, error) { return config.Load(o.configPath, o.profile) }
-func (o *options) http() *httpx.Client                { return httpx.New(o.timeout, o.offline, o.allowHTTP) }
+func (o *options) settings() (config.Settings, error) {
+	s, e := config.Load(o.configPath, o.profile)
+	if e == nil && s.AllowHTTP {
+		// A profile may opt its own hosts into plaintext; the flag is still
+		// able to turn it on, never off.
+		o.allowHTTP = true
+	}
+	return s, e
+}
+func (o *options) http() *httpx.Client { return httpx.New(o.timeout, o.offline, o.allowHTTP) }
 func (o *options) print(cmd *cobra.Command, v any) error {
 	b, e := json.Marshal(v)
 	if e != nil {

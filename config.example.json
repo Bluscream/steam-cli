@@ -15,6 +15,13 @@
       "web_key_env": "STEAM_PARTNER_API_KEY",
       "asf_url": "http://127.0.0.1:1242",
       "asf_password_env": "ASF_IPC_PASSWORD"
+    },
+    "lan": {
+      "asf_url": "http://192.168.0.2:1242",
+      "asf_password_env": "ASF_IPC_PASSWORD",
+      "allow_http": true,
+      "web_url": "https://api.steampowered.com",
+      "web_key_env": "STEAM_WEB_API_KEY"
     }
   }
 }

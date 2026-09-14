@@ -376,3 +376,36 @@ func TestStatusRejectsBadApp(t *testing.T) {
 		t.Fatal("expected --app validation")
 	}
 }
+
+// A profile may opt a trusted LAN host into plaintext so --allow-http is not
+// needed on every invocation. Loopback is always permitted, so this uses a
+// non-loopback address (TEST-NET-1) to exercise the actual check: the URL is
+// validated before any connection is attempted.
+func TestProfileAllowHTTPGovernsPlaintext(t *testing.T) {
+	cleanEnv(t)
+	dir := t.TempDir()
+
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	const host = "http://192.0.2.1:1242"
+
+	strict := write("strict.json", `{"default_profile":"lan","profiles":{"lan":{"asf_url":"`+host+`"}}}`)
+	_, err := execute(t, "--timeout", "1s", "--config", strict, "asf", "status")
+	if err == nil || !strings.Contains(err.Error(), "HTTPS is required") {
+		t.Fatalf("plaintext must be refused without allow_http, got %v", err)
+	}
+
+	relaxed := write("lan.json", `{"default_profile":"lan","profiles":{"lan":{"asf_url":"`+host+`","allow_http":true}}}`)
+	_, err = execute(t, "--timeout", "1s", "--config", relaxed, "asf", "status")
+	if err == nil {
+		t.Fatal("expected the request to be attempted and fail to connect")
+	}
+	if strings.Contains(err.Error(), "HTTPS is required") {
+		t.Fatalf("allow_http should have permitted the scheme, got %v", err)
+	}
+}

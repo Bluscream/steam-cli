@@ -26,6 +26,10 @@ type Profile struct {
 	ASFPasswordEnv           string `json:"asf_password_env,omitempty"`
 	ASFPasswordFile          string `json:"asf_password_file,omitempty"`
 	SteamCMDPath             string `json:"steamcmd_path,omitempty"`
+	// AllowHTTP permits plaintext HTTP outside loopback for this profile's
+	// hosts. Intended for a trusted LAN service such as an ASF instance; the
+	// --allow-http flag turns it on for a single run instead.
+	AllowHTTP bool `json:"allow_http,omitempty"`
 }
 type File struct {
 	DefaultProfile string             `json:"default_profile"`

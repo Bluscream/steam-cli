@@ -83,3 +83,27 @@ func TestSecretPreservesSpacesAndBoundsFile(t *testing.T) {
 		t.Fatal("oversized secret accepted")
 	}
 }
+
+func TestProfileAllowHTTP(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(`{"default_profile":"lan","profiles":{
+		"lan":{"asf_url":"http://192.168.0.2:1242","allow_http":true},
+		"strict":{"asf_url":"http://192.168.0.2:1242"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lan, err := Load(path, "lan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lan.AllowHTTP {
+		t.Error("allow_http should be honored from the profile")
+	}
+	strict, err := Load(path, "strict")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strict.AllowHTTP {
+		t.Error("allow_http must default to false")
+	}
+}
