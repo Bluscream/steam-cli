@@ -779,7 +779,7 @@ func TestAutoParsesASFEnvelopesOnly(t *testing.T) {
 func TestASFStatusRendering(t *testing.T) {
 	cleanEnv(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"Result":{"Version":"6.0.1.2","ProcessID":1234,"MemoryUsage":104857600,"ProcessStartTime":"2026-09-14T12:00:00Z","BotsCount":3,"BuildVariant":"generic"},"Success":true}`))
+		w.Write([]byte(`{"Result":{"Version":"6.0.1.2","ProcessID":1234,"MemoryUsage":102400,"ProcessStartTime":"2026-09-14T12:00:00Z","BotsCount":3,"BuildVariant":"generic"},"Success":true}`))
 	}))
 	defer server.Close()
 

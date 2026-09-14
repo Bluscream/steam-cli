@@ -219,25 +219,28 @@ func render2FA(o *options, w io.Writer, b []byte) bool {
 func renderASFStatus(o *options, w io.Writer, b []byte) bool {
 	var env struct {
 		Result struct {
-			Version        string `json:"Version"`
-			ProcessID      int64  `json:"ProcessID"`
-			MemoryUsage    int64  `json:"MemoryUsage"`
-			StartedAt      string `json:"ProcessStartTime"`
-			BotsCount      int    `json:"BotsCount"`
-			CardsFarmer    any    `json:"CardsFarmer"`
-			BuildVariant   string `json:"BuildVariant"`
+			Version      string `json:"Version"`
+			ProcessID    int64  `json:"ProcessID"`
+			MemoryUsage  int64  `json:"MemoryUsage"` // in KB according to ASF OpenAPI schema
+			StartedAt    string `json:"ProcessStartTime"`
+			BotsCount    int    `json:"BotsCount"`
+			BuildVariant string `json:"BuildVariant"`
 		} `json:"Result"`
 	}
 	if json.Unmarshal(b, &env) != nil || env.Result.Version == "" {
 		return false
 	}
 	res := env.Result
-	memMB := float64(res.MemoryUsage) / 1024.0 / 1024.0
+	memMB := float64(res.MemoryUsage) / 1024.0
 	t := o.newDetail(w)
 	detailRows(t,
 		kv("ASF version", res.Version),
 		kv("Build variant", res.BuildVariant),
-		kv("Process ID", fmt.Sprint(res.ProcessID)),
+	)
+	if res.ProcessID > 0 {
+		detailRows(t, kv("Process ID", fmt.Sprint(res.ProcessID)))
+	}
+	detailRows(t,
 		kv("Memory usage", fmt.Sprintf("%.1f MiB", memMB)),
 		kv("Started at", res.StartedAt),
 	)

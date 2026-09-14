@@ -216,6 +216,14 @@ func infoCommand(o *options) *cobra.Command {
 					} `json:"Result"`
 				}
 				if json.Unmarshal(b, &env) == nil && env.Result.Version != "" {
+					botCount := env.Result.BotsCount
+					// If Api/ASF reports 0 bots, query Api/Bot/ASF to get the actual count of configured bots
+					if botBytes, err := asfClient.Call(ctx, "GET", "Api/Bot/ASF", nil, nil); err == nil {
+						if botList, ok := asf.Bots(botBytes); ok {
+							botCount = len(botList)
+						}
+					}
+
 					mu.Lock()
 					info.ASF = &asfInfoData{
 						Version:      env.Result.Version,
@@ -223,7 +231,7 @@ func infoCommand(o *options) *cobra.Command {
 						ProcessID:    env.Result.ProcessID,
 						MemoryUsage:  env.Result.MemoryUsage,
 						StartedAt:    env.Result.StartedAt,
-						BotsCount:    env.Result.BotsCount,
+						BotsCount:    botCount,
 					}
 					mu.Unlock()
 				}
@@ -400,15 +408,20 @@ func infoCommand(o *options) *cobra.Command {
 				if info.ASF != nil {
 					o.heading(w, "ArchiSteamFarm (ASF)")
 					t := o.newDetail(w)
-					memMB := float64(info.ASF.MemoryUsage) / 1024.0 / 1024.0
-					detailRows(t,
+					memMB := float64(info.ASF.MemoryUsage) / 1024.0
+					rows := []([2]string){
 						kv("ASF version", info.ASF.Version),
 						kv("Build variant", info.ASF.BuildVariant),
-						kv("Process ID", fmt.Sprint(info.ASF.ProcessID)),
+					}
+					if info.ASF.ProcessID > 0 {
+						rows = append(rows, kv("Process ID", fmt.Sprint(info.ASF.ProcessID)))
+					}
+					rows = append(rows,
 						kv("Memory usage", fmt.Sprintf("%.1f MiB", memMB)),
 						kv("Started at", info.ASF.StartedAt),
 						kv("Bots configured", fmt.Sprint(info.ASF.BotsCount)),
 					)
+					detailRows(t, rows...)
 					o.renderTable(t)
 				}
 			})
