@@ -409,3 +409,121 @@ func TestProfileAllowHTTPGovernsPlaintext(t *testing.T) {
 		t.Fatalf("allow_http should have permitted the scheme, got %v", err)
 	}
 }
+
+// --- asf --bots and --output parsed ---
+
+func asfServer(t *testing.T, handler http.HandlerFunc) (string, func()) {
+	t.Helper()
+	s := httptest.NewServer(handler)
+	return s.URL, s.Close
+}
+
+func TestASFParsedExtractsToken(t *testing.T) {
+	cleanEnv(t)
+	url, done := asfServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"Result":{"Bluscream":{"Result":"JKWGP","Message":"Success!","Success":true}},"Message":"OK","Success":true}`))
+	})
+	defer done()
+
+	out, err := execute(t, "--output", "parsed", "asf", "--url", url, "token", "Bluscream")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.TrimSpace(out) != "JKWGP" {
+		t.Errorf("parsed output = %q, want just the token", out)
+	}
+}
+
+func TestASFParsedMultipleBotsArePrefixed(t *testing.T) {
+	cleanEnv(t)
+	url, done := asfServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"Result":{"B":{"Result":"22222"},"A":{"Result":"11111"}},"Success":true}`))
+	})
+	defer done()
+
+	out, err := execute(t, "--output", "parsed", "asf", "--url", url, "token", "--bots", "A,B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "A: 11111\nB: 22222" {
+		t.Errorf("parsed output = %q", out)
+	}
+}
+
+func TestASFParsedFallsBackToMessage(t *testing.T) {
+	cleanEnv(t)
+	url, done := asfServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"Result":{"Anni":{"Result":null,"Message":"Bot is not connected.","Success":false}},"Success":false}`))
+	})
+	defer done()
+
+	out, err := execute(t, "--output", "parsed", "asf", "--url", url, "token", "Anni")
+	// Success=false must still exit nonzero while showing the reason.
+	if err == nil {
+		t.Error("a failed ASF operation should exit nonzero")
+	}
+	if !strings.Contains(out, "Bot is not connected.") {
+		t.Errorf("parsed output should explain the failure, got %q", out)
+	}
+}
+
+// parsed applies to ASF envelopes; anything else still prints as JSON.
+func TestParsedFallsThroughForNonASFPayloads(t *testing.T) {
+	cleanEnv(t)
+	url, done := asfServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"steamid":"7656119800000001"}`))
+	})
+	defer done()
+
+	out, err := execute(t, "--output", "parsed", "web", "--url", url, "call", "ITest", "Read", "--method", "GET")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "7656119800000001") {
+		t.Errorf("non-ASF payload should still be printed, got %q", out)
+	}
+}
+
+func TestASFBotsFlagAndDefaultSelector(t *testing.T) {
+	cleanEnv(t)
+	var paths []string
+	url, done := asfServer(t, func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Write([]byte(`{"Result":{},"Message":"OK","Success":true}`))
+	})
+	defer done()
+
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"asf", "--url", url, "bots"}, "/Api/Bot/ASF"},
+		{[]string{"asf", "--url", url, "bots", "Alpha"}, "/Api/Bot/Alpha"},
+		{[]string{"asf", "--url", url, "--bots", "Alpha,Beta", "bots"}, "/Api/Bot/Alpha,Beta"},
+		// A positional selector wins over the flag.
+		{[]string{"asf", "--url", url, "--bots", "Alpha", "bots", "Gamma"}, "/Api/Bot/Gamma"},
+		{[]string{"asf", "--url", url, "--bots", "Alpha", "token"}, "/Api/Bot/Alpha/TwoFactorAuthentication/Token"},
+		{[]string{"asf", "--url", url, "token"}, "/Api/Bot/ASF/TwoFactorAuthentication/Token"},
+		{[]string{"asf", "--url", url, "--bots", "Alpha", "pause"}, "/Api/Bot/Alpha/Pause"},
+		{[]string{"asf", "--url", url, "resume"}, "/Api/Bot/ASF/Resume"},
+	}
+	for _, tc := range cases {
+		paths = nil
+		if _, err := execute(t, tc.args...); err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		if len(paths) != 1 || paths[0] != tc.want {
+			t.Errorf("%v => %v, want %q", tc.args, paths, tc.want)
+		}
+	}
+}
+
+func TestOutputFormatValidation(t *testing.T) {
+	cleanEnv(t)
+	if _, err := execute(t, "--output", "nonsense", "id", "76561197960287930"); err == nil {
+		t.Fatal("expected an invalid --output to be rejected")
+	}
+	if _, err := execute(t, "--output", "parsed", "id", "76561197960287930"); err != nil {
+		t.Fatalf("parsed must be accepted: %v", err)
+	}
+}

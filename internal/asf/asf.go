@@ -6,8 +6,10 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"steamcli.local/steam/internal/httpx"
+	"sort"
 	"strings"
+
+	"steamcli.local/steam/internal/httpx"
 )
 
 type Client struct {
@@ -65,4 +67,91 @@ func BotPath(bots, action string) (string, error) {
 		p += "/" + action
 	}
 	return p, nil
+}
+
+// Envelope is the shape every ASF IPC response shares.
+type Envelope struct {
+	Result  json.RawMessage `json:"Result"`
+	Message string          `json:"Message"`
+	Success *bool           `json:"Success"`
+}
+
+// ParsedLine is one bot's extracted value. Bot is empty when the response
+// carried a single unkeyed result.
+type ParsedLine struct {
+	Bot   string
+	Value string
+}
+
+// Parse reduces an ASF response to the value a caller actually wants.
+//
+// ASF nests its payload differently per endpoint. A two-factor token arrives as
+// Result[bot].Result, an executed command as a bare Result string, and a failed
+// operation explains itself in Result[bot].Message or the envelope's Message.
+// Parse walks that preference order so callers do not have to. It reports false
+// when the body is not an ASF envelope.
+func Parse(b []byte) ([]ParsedLine, bool) {
+	var env Envelope
+	if e := json.Unmarshal(b, &env); e != nil || (env.Success == nil && env.Message == "" && len(env.Result) == 0) {
+		return nil, false
+	}
+
+	// A scalar Result is the whole answer.
+	if s, ok := scalar(env.Result); ok {
+		return []ParsedLine{{Value: s}}, true
+	}
+
+	// Otherwise Result is keyed by bot name.
+	var byBot map[string]json.RawMessage
+	if e := json.Unmarshal(env.Result, &byBot); e != nil || len(byBot) == 0 {
+		if env.Message != "" {
+			return []ParsedLine{{Value: env.Message}}, true
+		}
+		return nil, false
+	}
+
+	names := make([]string, 0, len(byBot))
+	for k := range byBot {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+
+	out := make([]ParsedLine, 0, len(names))
+	for _, name := range names {
+		var inner Envelope
+		value := ""
+		if json.Unmarshal(byBot[name], &inner) == nil {
+			if s, ok := scalar(inner.Result); ok && s != "" {
+				value = s
+			} else if inner.Message != "" {
+				value = inner.Message
+			}
+		}
+		if value == "" {
+			if s, ok := scalar(byBot[name]); ok {
+				value = s
+			} else {
+				value = env.Message
+			}
+		}
+		out = append(out, ParsedLine{Bot: name, Value: value})
+	}
+	return out, true
+}
+
+// scalar renders a JSON string, number, or boolean as text.
+func scalar(raw json.RawMessage) (string, bool) {
+	t := strings.TrimSpace(string(raw))
+	if t == "" || t == "null" {
+		return "", false
+	}
+	switch t[0] {
+	case '{', '[':
+		return "", false
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s, true
+	}
+	return t, true
 }

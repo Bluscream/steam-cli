@@ -8,9 +8,22 @@ import (
 )
 
 func asfCommand(o *options) *cobra.Command {
-	var base string
+	var base, botsFlag string
 	root := &cobra.Command{Use: "asf", Short: "Control an ArchiSteamFarm instance through its IPC API"}
 	root.PersistentFlags().StringVar(&base, "url", "", "ASF base URL, including optional reverse-proxy prefix")
+	root.PersistentFlags().StringVarP(&botsFlag, "bots", "b", "", "Comma-separated bot names for commands that take a selector (default: ASF, meaning all bots)")
+
+	// selector resolves a bot selector from the positional argument, then
+	// --bots, then ASF, which ArchiSteamFarm reads as every bot.
+	selector := func(args []string) string {
+		if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
+			return args[0]
+		}
+		if strings.TrimSpace(botsFlag) != "" {
+			return botsFlag
+		}
+		return "ASF"
+	}
 	client := func() (*asf.Client, error) {
 		s, e := o.settings()
 		if e != nil {
@@ -45,11 +58,7 @@ func asfCommand(o *options) *cobra.Command {
 		}})
 	}
 	bots := &cobra.Command{Use: "bots [SELECTOR]", Short: "Read bot information (default: ASF = all bots)", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		s := "ASF"
-		if len(args) > 0 {
-			s = args[0]
-		}
-		p, e := asf.BotPath(s, "")
+		p, e := asf.BotPath(selector(args), "")
 		if e != nil {
 			return e
 		}
@@ -92,8 +101,8 @@ func asfCommand(o *options) *cobra.Command {
 	for _, action := range []string{"start", "stop", "pause", "resume"} {
 		var permanent bool
 		var resume uint16
-		c := &cobra.Command{Use: action + " SELECTOR", Short: strings.Title(action) + " selected bots", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-			p, e := asf.BotPath(args[0], strings.Title(action))
+		c := &cobra.Command{Use: action + " [SELECTOR]", Short: strings.Title(action) + " selected bots (default: --bots, else ASF)", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+			p, e := asf.BotPath(selector(args), strings.Title(action))
 			if e != nil {
 				return e
 			}
@@ -114,9 +123,10 @@ func asfCommand(o *options) *cobra.Command {
 		}
 		root.AddCommand(c)
 	}
-	token := &cobra.Command{Use: "token SELECTOR", Short: "Retrieve two-factor tokens (sensitive stdout)", Args: cobra.ExactArgs(1)}
+	token := &cobra.Command{Use: "token [SELECTOR]", Short: "Retrieve two-factor tokens (sensitive stdout)", Args: cobra.MaximumNArgs(1),
+		Example: "  steam asf token Bluscream --output parsed\n  steam asf token --bots Bluscream,Blufriend --output parsed"}
 	token.RunE = func(cmd *cobra.Command, args []string) error {
-		p, e := asf.BotPath(args[0], "TwoFactorAuthentication/Token")
+		p, e := asf.BotPath(selector(args), "TwoFactorAuthentication/Token")
 		if e != nil {
 			return e
 		}

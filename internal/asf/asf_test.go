@@ -50,3 +50,86 @@ func TestBotSelector(t *testing.T) {
 		}
 	}
 }
+
+func TestParseShapes(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want []ParsedLine
+		ok   bool
+	}{{
+		name: "two-factor token nested under the bot",
+		body: `{"Result":{"Bluscream":{"Result":"JKWGP","Message":"Success!","Success":true}},"Message":"OK","Success":true}`,
+		want: []ParsedLine{{"Bluscream", "JKWGP"}},
+		ok:   true,
+	}, {
+		name: "several bots come back sorted",
+		body: `{"Result":{"Zed":{"Result":"22222"},"Abe":{"Result":"11111"}},"Success":true}`,
+		want: []ParsedLine{{"Abe", "11111"}, {"Zed", "22222"}},
+		ok:   true,
+	}, {
+		name: "executed command is a bare string",
+		body: `{"Result":"<Bot> Bot is not farming anything.","Message":"OK","Success":true}`,
+		want: []ParsedLine{{"", "<Bot> Bot is not farming anything."}},
+		ok:   true,
+	}, {
+		name: "no token falls back to the bot's message",
+		body: `{"Result":{"Anni":{"Result":null,"Message":"Bot is not connected.","Success":false}},"Success":false}`,
+		want: []ParsedLine{{"Anni", "Bot is not connected."}},
+		ok:   true,
+	}, {
+		name: "no per-bot detail falls back to the envelope message",
+		body: `{"Result":{},"Message":"Automatic farming is resumed already!","Success":false}`,
+		want: []ParsedLine{{"", "Automatic farming is resumed already!"}},
+		ok:   true,
+	}, {
+		name: "bot object without a scalar result uses its message",
+		body: `{"Result":{"A":{"BotName":"A","Nested":{"x":1},"Message":"ok"}},"Success":true}`,
+		want: []ParsedLine{{"A", "ok"}},
+		ok:   true,
+	}, {
+		name: "numbers and booleans render as text",
+		body: `{"Result":{"A":{"Result":42},"B":{"Result":true}},"Success":true}`,
+		want: []ParsedLine{{"A", "42"}, {"B", "true"}},
+		ok:   true,
+	}, {
+		name: "not an ASF envelope",
+		body: `{"something":"else"}`,
+		ok:   false,
+	}, {
+		name: "not JSON at all",
+		body: `<html>`,
+		ok:   false,
+	}}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := Parse([]byte(tc.body))
+			if ok != tc.ok {
+				t.Fatalf("recognized = %v, want %v", ok, tc.ok)
+			}
+			if !tc.ok {
+				return
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %+v, want %+v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("line %d = %+v, want %+v", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// A token must never be inferred from an unrelated field.
+func TestParseDoesNotInventValues(t *testing.T) {
+	got, ok := Parse([]byte(`{"Result":{"A":{"Success":false}},"Message":"","Success":false}`))
+	if !ok {
+		t.Fatal("envelope should be recognized")
+	}
+	if len(got) != 1 || got[0].Value != "" {
+		t.Errorf("got %+v, want an empty value rather than a guess", got)
+	}
+}

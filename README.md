@@ -194,6 +194,10 @@ With `STEAM_ASF_URL` and `ASF_IPC_PASSWORD` configured:
 
 ```sh
 ./bin/steam asf status
+./bin/steam asf bots --bots Alpha,Beta
+./bin/steam asf token Bluscream --output parsed
+./bin/steam asf token --bots Alpha,Beta --output parsed
+./bin/steam asf pause --bots Alpha --resume-in 600
 ./bin/steam asf bots
 ./bin/steam asf bots MyBot
 ./bin/steam asf schema
@@ -215,6 +219,8 @@ Authentication uses the `Authentication` header, never a password query string a
 
 A credential containing control characters cannot be sent as a header. Rather than surfacing Go's transport error, which reads like a network failure, the CLI names the header and suggests checking the value for stray whitespace, newlines, or terminal escape sequences. The credential itself is never echoed. Both user-supplied LAN ASF instances were tested with this option and header authentication.
 
+Commands that act on bots take a selector: a positional argument, the persistent `--bots`/`-b` flag, or neither, in which case `ASF` is used and ArchiSteamFarm reads that as every bot. A positional argument wins over the flag. Selectors are comma-separated bot names.
+
 `asf schema` retrieves `/swagger/ASF/swagger.json` from your instance, covering its version and plugins. Generic `asf call` reaches endpoints without requiring a CLI release. A response with `Success:false` prints its JSON and exits nonzero. The Web API and ASF are separate authentication domains.
 
 ## Local metadata and output
@@ -231,7 +237,7 @@ A credential containing control characters cannot be sent as a header. Rather th
 
 Library discovery checks common Windows/macOS/Linux locations and Linux Flatpak. `--root` handles nonstandard/custom installations. Both legacy and modern `libraryfolders.vdf` layouts are supported. Malformed manifests produce warnings in the JSON report; their contents are never executed. Library results describe local manifest state, not proof of an account license or cloud availability.
 
-JSON is indented by default, `compact` produces compact JSON, and `raw` preserves response bytes. HTTP errors omit response bodies/credential-bearing URLs. There are no hidden browser sessions, analytics, cookie jars, response logs, or background update checks. Normal HTTP proxy environment settings are honored by Go. Read-only HTTP retries are limited to two for 429/502/503/504, honor bounded `Retry-After`, and never retry authentication failures. Redirects are not followed, preventing credentials from being forwarded.
+JSON is indented by default, `compact` produces compact JSON, and `raw` preserves response bytes. `parsed` reduces an ASF response to the value behind it, so `asf token Bluscream --output parsed` prints `JKWGP` and nothing else. ASF nests its payload differently per endpoint: a token arrives as `Result[bot].Result`, an executed command as a bare `Result` string, and a refused operation explains itself in `Result[bot].Message` or the envelope's `Message`. `parsed` walks that order and prints the first value it finds, prefixing each line with the bot name when more than one bot answered. A `Success:false` response still exits nonzero while showing its reason. Payloads that are not ASF envelopes are printed as JSON, so `parsed` is safe to set globally. HTTP errors omit response bodies/credential-bearing URLs. There are no hidden browser sessions, analytics, cookie jars, response logs, or background update checks. Normal HTTP proxy environment settings are honored by Go. Read-only HTTP retries are limited to two for 429/502/503/504, honor bounded `Retry-After`, and never retry authentication failures. Redirects are not followed, preventing credentials from being forwarded.
 
 Exit codes: `0` success, `1` CLI/HTTP/application/verification failure, `130` interrupted; SteamCMD's positive nonzero process exit codes pass through. SteamCMD output remains its native terminal output regardless of `--output`.
 

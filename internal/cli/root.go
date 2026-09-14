@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"steamcli.local/steam/internal/asf"
 	"steamcli.local/steam/internal/config"
 	"steamcli.local/steam/internal/httpx"
 )
@@ -32,7 +33,7 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 	f := r.PersistentFlags()
 	f.StringVar(&o.configPath, "config", "", "Configuration JSON path")
 	f.StringVar(&o.profile, "profile", "", "Named configuration profile")
-	f.StringVar(&o.format, "output", "json", "Output: json, compact, raw")
+	f.StringVar(&o.format, "output", "json", "Output: json, compact, raw, parsed")
 	f.DurationVar(&o.timeout, "timeout", 30*time.Second, "Timeout per HTTP attempt (not game downloads)")
 	f.BoolVar(&o.offline, "offline", false, "Disable network and external SteamCMD execution; use cached metadata")
 	f.BoolVar(&o.allowHTTP, "allow-http", false, "Allow plaintext HTTP outside loopback on a trusted network")
@@ -41,10 +42,10 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 			return errors.New("--timeout must be positive")
 		}
 		switch o.format {
-		case "json", "compact", "raw":
+		case "json", "compact", "raw", "parsed":
 			return nil
 		}
-		return errors.New("--output must be json, compact, or raw")
+		return errors.New("--output must be json, compact, raw, or parsed")
 	}
 	r.AddCommand(statusCommand(o), workshopCommand(o), webCommand(o), asfCommand(o), cmdCommand(o), configCommand(o), doctorCommand(o), libraryCommand(o), idCommand(o))
 	return r
@@ -67,7 +68,26 @@ func (o *options) print(cmd *cobra.Command, v any) error {
 	return o.printBytes(cmd, b)
 }
 func (o *options) printBytes(cmd *cobra.Command, b []byte) error {
-	if o.format != "raw" && len(bytes.TrimSpace(b)) > 0 {
+	// "parsed" reduces an ASF envelope to the value behind it. Any other
+	// payload falls through and is printed as JSON.
+	if o.format == "parsed" && len(bytes.TrimSpace(b)) > 0 {
+		if lines, ok := asf.Parse(b); ok {
+			w := cmd.OutOrStdout()
+			for _, l := range lines {
+				var e error
+				if l.Bot == "" || len(lines) == 1 {
+					_, e = fmt.Fprintln(w, l.Value)
+				} else {
+					_, e = fmt.Fprintf(w, "%s: %s\n", l.Bot, l.Value)
+				}
+				if e != nil {
+					return e
+				}
+			}
+			return nil
+		}
+	}
+	if o.format != "raw" && o.format != "parsed" && len(bytes.TrimSpace(b)) > 0 {
 		var dst bytes.Buffer
 		var e error
 		if o.format == "compact" {
