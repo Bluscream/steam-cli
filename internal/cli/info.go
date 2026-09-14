@@ -377,7 +377,6 @@ func infoCommand(o *options) *cobra.Command {
 						kv("Profile", info.Client.Profile),
 						kv("Steam client", steamPath),
 						kv("SteamCMD", cmdPath),
-						kv("Installed games", fmt.Sprint(info.Client.InstalledApps)),
 					)
 					o.renderTable(t)
 
