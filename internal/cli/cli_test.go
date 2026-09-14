@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,6 +29,9 @@ func cleanEnv(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("STEAM_WEB_URL", "")
 	t.Setenv("STEAM_ASF_URL", "")
+	t.Setenv("STEAM_COMMUNITY_URL", "")
+	t.Setenv("STEAM_LOGIN_SECURE", "")
+	t.Setenv("STEAM_ACCESS_TOKEN", "")
 }
 func TestJSONKeepsSteamIDsExact(t *testing.T) {
 	cleanEnv(t)
@@ -114,3 +118,261 @@ func TestStatusAndWorkshopCLI(t *testing.T) {
 	}
 }
 
+// --- workshop ---
+
+func workshopEnv(t *testing.T, api, comm string) {
+	t.Helper()
+	cleanEnv(t)
+	t.Setenv("STEAM_WEB_API_KEY", "k")
+	t.Setenv("STEAM_WEB_URL", api)
+	t.Setenv("STEAM_COMMUNITY_URL", comm)
+	t.Setenv("STEAM_LOGIN_SECURE", "76561198022446661%7C%7Ctok")
+}
+
+func TestWorkshopSubReportsPerItemFailure(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		if r.PostForm.Get("publishedfileid") == "222" {
+			w.Header().Set("x-eresult", "15")
+		} else {
+			w.Header().Set("x-eresult", "1")
+		}
+		w.Write([]byte(`{"response":{}}`))
+	}))
+	defer api.Close()
+	workshopEnv(t, api.URL, api.URL)
+
+	out, err := execute(t, "--allow-http", "workshop", "sub", "4000", "111", "222")
+	if err != nil {
+		t.Fatalf("a partial success should not fail the command: %v", err)
+	}
+	var got struct {
+		Succeeded int `json:"succeeded"`
+		Failed    int `json:"failed"`
+	}
+	if e := json.Unmarshal([]byte(out), &got); e != nil {
+		t.Fatalf("output is not JSON: %v\n%s", e, out)
+	}
+	if got.Succeeded != 1 || got.Failed != 1 {
+		t.Errorf("summary = %+v, want 1 succeeded and 1 failed\n%s", got, out)
+	}
+}
+
+func TestWorkshopSubFailsWhenEverythingFails(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-eresult", "15")
+		w.Write([]byte(`{"response":{}}`))
+	}))
+	defer api.Close()
+	workshopEnv(t, api.URL, api.URL)
+
+	if _, err := execute(t, "--allow-http", "workshop", "sub", "4000", "111"); err == nil {
+		t.Fatal("a batch where every item failed must exit nonzero")
+	}
+}
+
+func TestWorkshopSubNeedsItems(t *testing.T) {
+	cleanEnv(t)
+	if _, err := execute(t, "workshop", "sub", "4000"); err == nil {
+		t.Fatal("expected an error when no items are given")
+	}
+}
+
+func TestWorkshopRejectsBadAppID(t *testing.T) {
+	cleanEnv(t)
+	for _, args := range [][]string{
+		{"workshop", "sub", "nope", "1"},
+		{"workshop", "installed", "-5"},
+	} {
+		if _, err := execute(t, args...); err == nil {
+			t.Errorf("%v: expected an AppID validation error", args)
+		}
+	}
+}
+
+func TestWorkshopCreateCollectionAddsItems(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-eresult", "1")
+		w.Write([]byte(`{"response":{"publishedfileid":"777"}}`))
+	}))
+	defer api.Close()
+	var children []string
+	comm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		children = append(children, r.PostForm.Get("childid"))
+		w.Write([]byte(`{"success":1}`))
+	}))
+	defer comm.Close()
+	workshopEnv(t, api.URL, comm.URL)
+
+	out, err := execute(t, "--allow-http", "workshop", "create-collection", "4000",
+		"--title", "T", "--item", "1", "--item", "2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\n%s", err, out)
+	}
+	if len(children) != 2 {
+		t.Errorf("children added = %v, want two", children)
+	}
+	if !strings.Contains(out, `"items_added"`) {
+		t.Errorf("output must report what was added:\n%s", out)
+	}
+}
+
+// Creating a populated collection needs a Community session; say so instead of
+// reporting a success that did nothing.
+func TestWorkshopCreateCollectionWithoutSession(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-eresult", "1")
+		w.Write([]byte(`{"response":{"publishedfileid":"777"}}`))
+	}))
+	defer api.Close()
+	workshopEnv(t, api.URL, api.URL)
+	t.Setenv("STEAM_LOGIN_SECURE", "")
+
+	_, err := execute(t, "--allow-http", "workshop", "create-collection", "4000", "--title", "T", "--item", "1")
+	if err == nil {
+		t.Fatal("expected an error explaining that a session is required")
+	}
+	if !strings.Contains(err.Error(), "STEAM_LOGIN_SECURE") {
+		t.Errorf("error should name the missing credential: %v", err)
+	}
+}
+
+func TestWorkshopCreateCollectionNeedsTitle(t *testing.T) {
+	cleanEnv(t)
+	if _, err := execute(t, "workshop", "create-collection", "4000"); err == nil {
+		t.Fatal("expected --title to be required")
+	}
+}
+
+func TestWorkshopDeleteRequiresConfirmation(t *testing.T) {
+	cleanEnv(t)
+	_, err := execute(t, "workshop", "delete-collection", "4000", "123")
+	if err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("deletion must be confirmed: %v", err)
+	}
+}
+
+func TestWorkshopMembershipNeedsSession(t *testing.T) {
+	cleanEnv(t)
+	t.Setenv("STEAM_LOGIN_SECURE", "")
+	for _, sub := range []string{"add-items", "remove-items"} {
+		_, err := execute(t, "workshop", sub, "4000", "500", "1")
+		if err == nil || !strings.Contains(err.Error(), "STEAM_LOGIN_SECURE") {
+			t.Errorf("%s: expected a session error, got %v", sub, err)
+		}
+	}
+}
+
+func TestWorkshopSubsUsesCommunity(t *testing.T) {
+	var filter string
+	comm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		filter = r.URL.Query().Get("browsefilter")
+		w.Write([]byte(`<div id="sharedfile_42"></div>`))
+	}))
+	defer comm.Close()
+	workshopEnv(t, comm.URL, comm.URL)
+
+	out, err := execute(t, "--allow-http", "workshop", "subs", "4000")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if filter != "mysubscriptions" {
+		t.Errorf("browsefilter = %q", filter)
+	}
+	if !strings.Contains(out, "42") {
+		t.Errorf("output missing the item:\n%s", out)
+	}
+}
+
+func TestWorkshopFavoritesUsesCommunity(t *testing.T) {
+	var filter string
+	comm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		filter = r.URL.Query().Get("browsefilter")
+		w.Write([]byte(`<div id="sharedfile_7"></div>`))
+	}))
+	defer comm.Close()
+	workshopEnv(t, comm.URL, comm.URL)
+
+	if _, err := execute(t, "--allow-http", "workshop", "favorites", "4000"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if filter != "myfavorites" {
+		t.Errorf("browsefilter = %q, want myfavorites", filter)
+	}
+}
+
+func TestWorkshopInstalledIsLocal(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	dir := filepath.Join(root, "steamapps", "workshop")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	acf := "\"AppWorkshop\"\n{\n\t\"appid\"\t\t\"4000\"\n\t\"WorkshopItemsInstalled\"\n\t{\n\t\t\"123456\"\n\t\t{\n\t\t\t\"size\"\t\t\"1\"\n\t\t}\n\t}\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "appworkshop_4000.acf"), []byte(acf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "steamapps", "libraryfolders.vdf"),
+		[]byte("\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\""+root+"\"\n\t}\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := execute(t, "workshop", "installed", "4000", "--root", root)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "123456") {
+		t.Errorf("installed item missing:\n%s", out)
+	}
+	// Values inside the item block must not be mistaken for item IDs.
+	if strings.Contains(out, `"4000"`) && strings.Count(out, "123456") == 0 {
+		t.Errorf("unexpected parse result:\n%s", out)
+	}
+}
+
+// --- status ---
+
+func TestStatusOfflineFails(t *testing.T) {
+	cleanEnv(t)
+	if _, err := execute(t, "--offline", "status"); err == nil {
+		t.Fatal("status must fail in offline mode")
+	}
+}
+
+func TestStatusRawOutput(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "GetNumberOfCurrentPlayers"):
+			w.Write([]byte(`{"response":{"player_count":1234567,"result":1}}`))
+		case strings.Contains(r.URL.Path, "GetGameServersStatus"):
+			w.Write([]byte(`{"result":{"services":{"SessionsLogon":"normal"},
+				"datacenters":{"EU":{"capacity":"high","load":"low"}}}}`))
+		default:
+			w.Write([]byte(`{"ok":1}`))
+		}
+	}))
+	defer api.Close()
+	cleanEnv(t)
+	t.Setenv("STEAM_WEB_API_KEY", "k")
+	t.Setenv("STEAM_WEB_URL", api.URL)
+	t.Setenv("STEAM_COMMUNITY_URL", api.URL)
+
+	out, err := execute(t, "--allow-http", "--output", "raw", "status", "--no-cm", "--app", "730")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\n%s", err, out)
+	}
+	for _, want := range []string{"Core Services", "Online Players", "1,234,567", "Datacenters", "capacity=high"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("raw output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestStatusRejectsBadApp(t *testing.T) {
+	cleanEnv(t)
+	if _, err := execute(t, "status", "--app", "abc"); err == nil {
+		t.Fatal("expected --app validation")
+	}
+}

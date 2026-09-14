@@ -1,6 +1,7 @@
 package webapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,13 +63,14 @@ func (p *Parameter) UnmarshalJSON(b []byte) error {
 	}
 	return nil
 }
+
 type Method struct {
- Source string `json:"_type,omitempty"`
- Description string `json:"description,omitempty"`
-	Name       string      `json:"name"`
-	Version    int         `json:"version"`
-	HTTPMethod string      `json:"httpmethod"`
-	Parameters []Parameter `json:"parameters"`
+	Source      string      `json:"_type,omitempty"`
+	Description string      `json:"description,omitempty"`
+	Name        string      `json:"name"`
+	Version     int         `json:"version"`
+	HTTPMethod  string      `json:"httpmethod"`
+	Parameters  []Parameter `json:"parameters"`
 }
 type Interface struct {
 	Name    string   `json:"name"`
@@ -81,22 +84,33 @@ type Catalog struct {
 type Client struct {
 	HTTP                   *httpx.Client
 	BaseURL, Key, CacheDir string
- AccessToken string
+	AccessToken            string
 }
 
 var identifier = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
 
 func (c *Client) Call(ctx context.Context, iface, method string, version int, verb string, params url.Values) ([]byte, error) {
+	r, e := c.CallFull(ctx, iface, method, version, verb, params)
+	if e != nil {
+		return nil, e
+	}
+	return r.Body, nil
+}
+
+// CallFull returns the response headers alongside the body. Steam reports
+// API-level failures in x-eresult while still answering HTTP 200, so any
+// caller performing a mutation must inspect the result rather than the status.
+func (c *Client) CallFull(ctx context.Context, iface, method string, version int, verb string, params url.Values) (httpx.Response, error) {
 	if !identifier.MatchString(iface) || !identifier.MatchString(method) || version < 1 {
-		return nil, errors.New("expected valid interface, method, and positive version")
+		return httpx.Response{}, errors.New("expected valid interface, method, and positive version")
 	}
 	verb = strings.ToUpper(verb)
 	if verb != "GET" && verb != "POST" {
-		return nil, errors.New("Steam Web API supports GET or POST")
+		return httpx.Response{}, errors.New("Steam Web API supports GET or POST")
 	}
 	endpoint, e := httpx.Endpoint(c.BaseURL, fmt.Sprintf("%s/%s/v%d/", iface, method, version), c.HTTP.AllowHTTP)
 	if e != nil {
-		return nil, e
+		return httpx.Response{}, e
 	}
 	p := make(url.Values)
 	for k, v := range params {
@@ -105,16 +119,95 @@ func (c *Client) Call(ctx context.Context, iface, method string, version int, ve
 	if c.Key != "" && !p.Has("key") {
 		p.Set("key", c.Key)
 	}
-	if c.AccessToken!=""&&!p.Has("access_token"){p.Set("access_token",c.AccessToken)}
- if !p.Has("format") {
+	if c.AccessToken != "" && !p.Has("access_token") {
+		p.Set("access_token", c.AccessToken)
+	}
+	if !p.Has("format") {
 		p.Set("format", "json")
 	}
 	h := make(http.Header)
 	if verb == "POST" {
 		h.Set("Content-Type", "application/x-www-form-urlencoded")
-		return c.HTTP.Do(ctx, verb, endpoint, nil, []byte(p.Encode()), h)
+		return c.HTTP.DoFull(ctx, verb, endpoint, nil, []byte(p.Encode()), h)
 	}
-	return c.HTTP.Do(ctx, verb, endpoint, p, nil, h)
+	return c.HTTP.DoFull(ctx, verb, endpoint, p, nil, h)
+}
+
+// EResult mirrors Valve's EResult enum for the values this CLI can encounter.
+type EResult int
+
+const (
+	EResultOK               EResult = 1
+	EResultFail             EResult = 2
+	EResultInvalidParam     EResult = 8
+	EResultFileNotFound     EResult = 9
+	EResultAccessDenied     EResult = 15
+	EResultTimeout          EResult = 16
+	EResultLimitExceeded    EResult = 25
+	EResultRevoked          EResult = 26
+	EResultInvalidState     EResult = 11
+	EResultServiceUnavail   EResult = 20
+	EResultNotLoggedOn      EResult = 21
+	EResultInsufficientPriv EResult = 24
+)
+
+var eresultNames = map[EResult]string{
+	EResultOK:               "OK",
+	EResultFail:             "generic failure",
+	EResultInvalidParam:     "invalid parameter",
+	EResultFileNotFound:     "file not found (item may not exist, or is hidden or deleted)",
+	EResultInvalidState:     "invalid state for this operation",
+	EResultAccessDenied:     "access denied (this method may require a publisher key or an authenticated session)",
+	EResultTimeout:          "timed out",
+	EResultServiceUnavail:   "service unavailable",
+	EResultNotLoggedOn:      "not logged on (an access token is required for this method)",
+	EResultInsufficientPriv: "insufficient privilege",
+	EResultLimitExceeded:    "limit exceeded",
+	EResultRevoked:          "revoked",
+}
+
+func (e EResult) String() string {
+	if n, ok := eresultNames[e]; ok {
+		return fmt.Sprintf("EResult %d (%s)", int(e), n)
+	}
+	return fmt.Sprintf("EResult %d", int(e))
+}
+
+// ResultError is returned when Steam accepted the request but refused the operation.
+type ResultError struct{ Result EResult }
+
+func (e *ResultError) Error() string { return "Steam refused the request: " + e.Result.String() }
+
+// CheckResult interprets a Steam response as the outcome of a mutation. An
+// HTTP 200 with an empty body is not success: Valve reports the real outcome
+// in the x-eresult header, or in a result field inside the response object.
+func CheckResult(r httpx.Response) error {
+	if s := r.Header.Get("x-eresult"); s != "" {
+		n, e := strconv.Atoi(s)
+		if e == nil {
+			if EResult(n) == EResultOK {
+				return nil
+			}
+			return &ResultError{EResult(n)}
+		}
+	}
+	var body struct {
+		Response struct {
+			Result *int `json:"result"`
+		} `json:"response"`
+	}
+	if e := json.Unmarshal(r.Body, &body); e == nil && body.Response.Result != nil {
+		if EResult(*body.Response.Result) == EResultOK {
+			return nil
+		}
+		return &ResultError{EResult(*body.Response.Result)}
+	}
+	// No signal either way. Valve omits x-eresult on some successful writes;
+	// treat a well-formed response as accepted rather than inventing a failure.
+	if len(bytes.TrimSpace(r.Body)) == 0 || json.Valid(r.Body) {
+		return nil
+	}
+	return errors.New("unrecognized response from Steam (no result code and body is not JSON)")
 }
 func (c *Client) cachePath() string {
 	// Scope by host AND credential without persisting the key itself.

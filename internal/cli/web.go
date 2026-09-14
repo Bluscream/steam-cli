@@ -15,8 +15,8 @@ func webCommand(o *options) *cobra.Command {
 	var noKey bool
 	root := &cobra.Command{Use: "web", Short: "Discover and call Steam Web API methods"}
 	root.PersistentFlags().StringVar(&base, "url", "", "Override API base URL (also supports the partner API)")
-	root.PersistentFlags().StringVar(&catalog,"catalog","all","Discovery source: all (live + bundled xPaw), live, xpaw")
- root.PersistentFlags().BoolVar(&noKey, "no-key", false, "Do not load or send a configured API key")
+	root.PersistentFlags().StringVar(&catalog, "catalog", "all", "Discovery source: all (live + bundled xPaw), live, xpaw")
+	root.PersistentFlags().BoolVar(&noKey, "no-key", false, "Do not load or send a configured API key")
 	client := func() (*webapi.Client, error) {
 		s, e := o.settings()
 		if e != nil {
@@ -33,8 +33,14 @@ func webCommand(o *options) *cobra.Command {
 		if base != "" {
 			u = base
 		}
-		token:="";if !noKey{token,e=s.AccessToken();if e!=nil{return nil,e}}
- return &webapi.Client{HTTP: o.http(), BaseURL: u, Key: k, CacheDir: s.CacheDir,AccessToken:token}, nil
+		token := ""
+		if !noKey {
+			token, e = s.AccessToken()
+			if e != nil {
+				return nil, e
+			}
+		}
+		return &webapi.Client{HTTP: o.http(), BaseURL: u, Key: k, CacheDir: s.CacheDir, AccessToken: token}, nil
 	}
 	var refresh bool
 	methods := &cobra.Command{Use: "methods [FILTER]", Short: "List method signatures; cache them for offline browsing", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -87,7 +93,9 @@ func webCommand(o *options) *cobra.Command {
 			}
 			v = m.Version
 			method = m.HTTPMethod
- if method==""{return errors.New("the reference does not know this method’s HTTP verb; specify --method GET or POST explicitly")}
+			if method == "" {
+				return errors.New("the reference does not know this method’s HTTP verb; specify --method GET or POST explicitly")
+			}
 		} else if v == 0 {
 			v = 1
 		}

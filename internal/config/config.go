@@ -14,15 +14,18 @@ import (
 )
 
 type Profile struct {
- AccessTokenEnv string `json:"access_token_env,omitempty"`
- AccessTokenFile string `json:"access_token_file,omitempty"`
-	WebURL          string `json:"web_url,omitempty"`
-	WebKeyEnv       string `json:"web_key_env,omitempty"`
-	WebKeyFile      string `json:"web_key_file,omitempty"`
-	ASFURL          string `json:"asf_url,omitempty"`
-	ASFPasswordEnv  string `json:"asf_password_env,omitempty"`
-	ASFPasswordFile string `json:"asf_password_file,omitempty"`
-	SteamCMDPath    string `json:"steamcmd_path,omitempty"`
+	AccessTokenEnv           string `json:"access_token_env,omitempty"`
+	AccessTokenFile          string `json:"access_token_file,omitempty"`
+	WebURL                   string `json:"web_url,omitempty"`
+	WebKeyEnv                string `json:"web_key_env,omitempty"`
+	WebKeyFile               string `json:"web_key_file,omitempty"`
+	CommunityURL             string `json:"community_url,omitempty"`
+	CommunityLoginSecureEnv  string `json:"community_login_secure_env,omitempty"`
+	CommunityLoginSecureFile string `json:"community_login_secure_file,omitempty"`
+	ASFURL                   string `json:"asf_url,omitempty"`
+	ASFPasswordEnv           string `json:"asf_password_env,omitempty"`
+	ASFPasswordFile          string `json:"asf_password_file,omitempty"`
+	SteamCMDPath             string `json:"steamcmd_path,omitempty"`
 }
 type File struct {
 	DefaultProfile string             `json:"default_profile"`
@@ -91,8 +94,16 @@ func Load(path, name string) (Settings, error) {
 	if p.ASFURL == "" {
 		p.ASFURL = "http://127.0.0.1:1242"
 	}
-	if p.AccessTokenEnv==""{p.AccessTokenEnv="STEAM_ACCESS_TOKEN"}
- if p.WebKeyEnv == "" {
+	if p.CommunityURL == "" {
+		p.CommunityURL = "https://steamcommunity.com"
+	}
+	if p.AccessTokenEnv == "" {
+		p.AccessTokenEnv = "STEAM_ACCESS_TOKEN"
+	}
+	if p.CommunityLoginSecureEnv == "" {
+		p.CommunityLoginSecureEnv = "STEAM_LOGIN_SECURE"
+	}
+	if p.WebKeyEnv == "" {
 		p.WebKeyEnv = "STEAM_WEB_API_KEY"
 	}
 	if p.ASFPasswordEnv == "" {
@@ -101,12 +112,12 @@ func Load(path, name string) (Settings, error) {
 	for _, v := range []struct {
 		env string
 		dst *string
-	}{{"STEAM_WEB_URL", &p.WebURL}, {"STEAM_ASF_URL", &p.ASFURL}, {"STEAMCMD_PATH", &p.SteamCMDPath}, {"STEAM_CLI_DATA_DIR", &d}, {"STEAM_CLI_CACHE_DIR", &k}} {
+	}{{"STEAM_WEB_URL", &p.WebURL}, {"STEAM_COMMUNITY_URL", &p.CommunityURL}, {"STEAM_ASF_URL", &p.ASFURL}, {"STEAMCMD_PATH", &p.SteamCMDPath}, {"STEAM_CLI_DATA_DIR", &d}, {"STEAM_CLI_CACHE_DIR", &k}} {
 		if s := os.Getenv(v.env); s != "" {
 			*v.dst = s
 		}
 	}
-	for _, raw := range []string{p.WebURL, p.ASFURL} {
+	for _, raw := range []string{p.WebURL, p.ASFURL, p.CommunityURL} {
 		u, e := url.Parse(raw)
 		if e != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https") {
 			return Settings{}, errors.New("configured URLs must be HTTP(S) URLs without credentials, query, or fragment")
@@ -165,7 +176,15 @@ func Init(path string) error {
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
-	return enc.Encode(File{DefaultProfile: "default", Profiles: map[string]Profile{"default": {WebURL: "https://api.steampowered.com", ASFURL: "http://127.0.0.1:1242", WebKeyEnv: "STEAM_WEB_API_KEY", ASFPasswordEnv: "ASF_IPC_PASSWORD"}}})
+	return enc.Encode(File{DefaultProfile: "default", Profiles: map[string]Profile{"default": {WebURL: "https://api.steampowered.com", CommunityURL: "https://steamcommunity.com", ASFURL: "http://127.0.0.1:1242", WebKeyEnv: "STEAM_WEB_API_KEY", AccessTokenEnv: "STEAM_ACCESS_TOKEN", CommunityLoginSecureEnv: "STEAM_LOGIN_SECURE", ASFPasswordEnv: "ASF_IPC_PASSWORD"}}})
 }
 
-func(s Settings)AccessToken()(string,error){return Secret(s.AccessTokenEnv,s.AccessTokenFile)}
+func (s Settings) AccessToken() (string, error) {
+	return Secret(s.AccessTokenEnv, s.AccessTokenFile)
+}
+
+// CommunityLoginSecure resolves the steamLoginSecure browser cookie used for
+// Community endpoints that the Web API does not expose.
+func (s Settings) CommunityLoginSecure() (string, error) {
+	return Secret(s.CommunityLoginSecureEnv, s.CommunityLoginSecureFile)
+}

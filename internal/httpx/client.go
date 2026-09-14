@@ -84,42 +84,65 @@ func Endpoint(base, path string, allowHTTP bool) (string, error) {
 	u.RawPath = ""
 	return u.String(), nil
 }
+
+// Response carries the parts of an HTTP reply callers need beyond the body.
+// Steam signals API-level failures in headers while still returning 200.
+type Response struct {
+	Header http.Header
+	Body   []byte
+	Status int
+}
+
 func (c *Client) Do(ctx context.Context, method, endpoint string, q url.Values, body []byte, headers http.Header) ([]byte, error) {
+	r, e := c.DoFull(ctx, method, endpoint, q, body, headers)
+	if e != nil {
+		return nil, e
+	}
+	return r.Body, nil
+}
+
+// DoFull performs the request and returns the status and headers alongside
+// the body.
+func (c *Client) DoFull(ctx context.Context, method, endpoint string, q url.Values, body []byte, headers http.Header) (Response, error) {
 	if c.Offline {
-		return nil, errors.New("network disabled by --offline")
+		return Response{}, errors.New("network disabled by --offline")
 	}
 	u, e := url.Parse(endpoint)
 	if e != nil {
-		return nil, errors.New("invalid request URL")
+		return Response{}, errors.New("invalid request URL")
 	}
 	base := *u
 	base.RawQuery = ""
 	if _, e = ValidateURL(base.String(), c.AllowHTTP); e != nil {
-		return nil, e
+		return Response{}, e
 	}
 	u.RawQuery = q.Encode()
 	for attempt := 0; ; attempt++ {
 		req, e := http.NewRequestWithContext(ctx, method, u.String(), bytes.NewReader(body))
 		if e != nil {
-			return nil, errors.New("could not build HTTP request")
+			return Response{}, errors.New("could not build HTTP request")
 		}
 		req.Header = headers.Clone()
 		if req.Header == nil {
 			req.Header = make(http.Header)
 		}
-		req.Header.Set("User-Agent", "steam-cli/0.1")
-		req.Header.Set("Accept", "application/json")
+		if req.Header.Get("User-Agent") == "" {
+			req.Header.Set("User-Agent", "steam-cli/0.1")
+		}
+		if req.Header.Get("Accept") == "" {
+			req.Header.Set("Accept", "application/json")
+		}
 		resp, e := c.HTTP.Do(req)
 		if e != nil {
 			if ctx.Err() != nil {
-				return nil, ctx.Err()
+				return Response{}, ctx.Err()
 			}
 			// net/url errors contain the complete URL, including API keys.
 			var ne net.Error
 			if errors.As(e, &ne) && ne.Timeout() {
-				return nil, errors.New("HTTP request timed out")
+				return Response{}, errors.New("HTTP request timed out")
 			}
-			return nil, errors.New("HTTP transport failed (check network, TLS, and endpoint)")
+			return Response{}, errors.New("HTTP transport failed (check network, TLS, and endpoint)")
 		}
 		if method == http.MethodGet && attempt < c.Retries && (resp.StatusCode == 429 || resp.StatusCode == 502 || resp.StatusCode == 503 || resp.StatusCode == 504) {
 			delay := time.Duration(1<<attempt) * time.Second
@@ -135,30 +158,30 @@ func (c *Client) Do(ctx context.Context, method, endpoint string, q url.Values, 
 			}
 			if delay > 30*time.Second {
 				resp.Body.Close()
-				return nil, &StatusError{resp.StatusCode, resp.Header.Get("Retry-After")}
+				return Response{}, &StatusError{resp.StatusCode, resp.Header.Get("Retry-After")}
 			}
 			resp.Body.Close()
 			t := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
 				t.Stop()
-				return nil, ctx.Err()
+				return Response{}, ctx.Err()
 			case <-t.C:
 			}
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			resp.Body.Close()
-			return nil, &StatusError{resp.StatusCode, resp.Header.Get("Retry-After")}
+			return Response{}, &StatusError{resp.StatusCode, resp.Header.Get("Retry-After")}
 		}
 		b, e := io.ReadAll(io.LimitReader(resp.Body, MaxBody+1))
 		resp.Body.Close()
 		if e != nil {
-			return nil, errors.New("could not read HTTP response")
+			return Response{}, errors.New("could not read HTTP response")
 		}
 		if int64(len(b)) > MaxBody {
-			return nil, errors.New("HTTP response exceeds 32 MiB")
+			return Response{}, errors.New("HTTP response exceeds 32 MiB")
 		}
-		return b, nil
+		return Response{Header: resp.Header, Body: b, Status: resp.StatusCode}, nil
 	}
 }

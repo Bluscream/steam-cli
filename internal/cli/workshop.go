@@ -7,15 +7,45 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"steamcli.local/steam/internal/community"
 	"steamcli.local/steam/internal/library"
 	"steamcli.local/steam/internal/webapi"
 	"steamcli.local/steam/internal/workshop"
 )
 
+// summarize reports how a batch of per-item operations turned out, so a
+// partial failure is visible instead of being averaged into "success".
+func summarize(results []workshop.BatchResult) map[string]any {
+	ok := 0
+	for _, r := range results {
+		if r.Success {
+			ok++
+		}
+	}
+	return map[string]any{
+		"succeeded": ok,
+		"failed":    len(results) - ok,
+		"results":   results,
+	}
+}
+
+// batchErr makes the process exit nonzero when no item in a batch succeeded.
+func batchErr(results []workshop.BatchResult) error {
+	if len(results) == 0 {
+		return nil
+	}
+	for _, r := range results {
+		if r.Success {
+			return nil
+		}
+	}
+	return fmt.Errorf("all %d operations failed; see the results above", len(results))
+}
+
 func workshopCommand(o *options) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "workshop",
-		Short: "Manage Workshop items and collections (subscribe, query, create, edit, delete)",
+		Short: "Manage Workshop items and collections (subscribe, search, create, edit, delete)",
 	}
 
 	workshopClient := func() (*workshop.Client, error) {
@@ -23,95 +53,166 @@ func workshopCommand(o *options) *cobra.Command {
 		if err != nil {
 			return nil, err
 		}
-		key, _ := s.WebKey()
-		token, _ := s.AccessToken()
-		web := &webapi.Client{
-			HTTP:        o.http(),
-			BaseURL:     s.WebURL,
-			Key:         key,
-			CacheDir:    s.CacheDir,
-			AccessToken: token,
+		key, err := s.WebKey()
+		if err != nil {
+			return nil, err
 		}
-		return &workshop.Client{Web: web}, nil
+		token, err := s.AccessToken()
+		if err != nil {
+			return nil, err
+		}
+		cookie, err := s.CommunityLoginSecure()
+		if err != nil {
+			return nil, err
+		}
+		http := o.http()
+		return &workshop.Client{
+			Web: &webapi.Client{
+				HTTP:        http,
+				BaseURL:     s.WebURL,
+				Key:         key,
+				CacheDir:    s.CacheDir,
+				AccessToken: token,
+			},
+			Community: &community.Client{
+				HTTP:        http,
+				BaseURL:     s.CommunityURL,
+				LoginSecure: cookie,
+			},
+		}, nil
 	}
 
-	// 1. Subscribe (multi, or from collection)
-	var fromCollectionSub string
+	// resolveItems expands the item sources shared by several subcommands.
+	resolveItems := func(cmd *cobra.Command, wc *workshop.Client, appID int, explicit []string, fromCollection string, fromSubs, fromFavs, fromInstalled bool) ([]string, error) {
+		items := append([]string(nil), explicit...)
+
+		if fromCollection != "" {
+			coll, err := wc.GetCollectionDetails(cmd.Context(), fromCollection)
+			if err != nil {
+				return nil, fmt.Errorf("resolve collection %s: %w", fromCollection, err)
+			}
+			for _, ch := range coll.Children {
+				items = append(items, ch.PublishedFileID)
+			}
+		}
+		if fromSubs {
+			ids, err := wc.ListUserItems(cmd.Context(), appID, community.FilterSubscriptions)
+			if err != nil {
+				return nil, fmt.Errorf("list subscriptions: %w", err)
+			}
+			items = append(items, ids...)
+		}
+		if fromFavs {
+			ids, err := wc.ListUserItems(cmd.Context(), appID, community.FilterFavorites)
+			if err != nil {
+				return nil, fmt.Errorf("list favorites: %w", err)
+			}
+			items = append(items, ids...)
+		}
+		if fromInstalled {
+			rep, err := library.Scan(library.Defaults())
+			if err != nil {
+				return nil, fmt.Errorf("scan local libraries: %w", err)
+			}
+			apps, err := workshop.ScanInstalled(rep.Libraries, appID)
+			if err != nil {
+				return nil, err
+			}
+			for _, a := range apps {
+				items = append(items, a.Items...)
+			}
+		}
+
+		seen := make(map[string]bool)
+		var deduped []string
+		for _, it := range items {
+			it = strings.TrimSpace(it)
+			if it != "" && !seen[it] {
+				seen[it] = true
+				deduped = append(deduped, it)
+			}
+		}
+		return deduped, nil
+	}
+
+	appIDArg := func(s string) (int, error) {
+		n, err := strconv.Atoi(s)
+		if err != nil || n <= 0 {
+			return 0, errors.New("APPID must be a positive integer")
+		}
+		return n, nil
+	}
+
+	// 1. Subscribe
+	var subFromCollection string
+	var subFromFavs, subFromInstalled bool
 	sub := &cobra.Command{
 		Use:     "sub APPID [ITEMID...]",
 		Aliases: []string{"subscribe"},
-		Short:   "Subscribe to one or multiple workshop items, or all items in a collection",
+		Short:   "Subscribe to workshop items, a whole collection, or your favorites",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appID, err := strconv.Atoi(args[0])
+			appID, err := appIDArg(args[0])
 			if err != nil {
-				return errors.New("APPID must be an integer")
+				return err
 			}
 			wc, err := workshopClient()
 			if err != nil {
 				return err
 			}
-
-			items := args[1:]
-			if fromCollectionSub != "" {
-				coll, err := wc.GetCollectionDetails(cmd.Context(), fromCollectionSub)
-				if err != nil {
-					return fmt.Errorf("failed resolving collection items: %w", err)
-				}
-				for _, ch := range coll.Children {
-					items = append(items, ch.PublishedFileID)
-				}
+			items, err := resolveItems(cmd, wc, appID, args[1:], subFromCollection, false, subFromFavs, subFromInstalled)
+			if err != nil {
+				return err
 			}
-
 			if len(items) == 0 {
-				return errors.New("specify at least one ITEMID or use --from-collection")
+				return errors.New("no items to subscribe to; pass ITEMIDs or use --from-collection, --from-favorites, or --from-installed")
 			}
-
 			results := wc.Subscribe(cmd.Context(), appID, items)
-			return o.print(cmd, results)
+			if err := o.print(cmd, summarize(results)); err != nil {
+				return err
+			}
+			return batchErr(results)
 		},
 	}
-	sub.Flags().StringVar(&fromCollectionSub, "from-collection", "", "Subscribe to all items in this collection")
+	sub.Flags().StringVar(&subFromCollection, "from-collection", "", "Subscribe to every item in this collection")
+	sub.Flags().BoolVar(&subFromFavs, "from-favorites", false, "Subscribe to your favorited items for this game")
+	sub.Flags().BoolVar(&subFromInstalled, "from-installed", false, "Subscribe to items already present in your local library")
 
-	// 2. Unsubscribe (multi, or from collection)
-	var fromCollectionUnsub string
+	// 2. Unsubscribe
+	var unsubFromCollection string
+	var unsubAll bool
 	unsub := &cobra.Command{
 		Use:     "unsub APPID [ITEMID...]",
 		Aliases: []string{"unsubscribe"},
-		Short:   "Unsubscribe from one or multiple workshop items, or all items in a collection",
+		Short:   "Unsubscribe from workshop items, a whole collection, or everything for a game",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appID, err := strconv.Atoi(args[0])
+			appID, err := appIDArg(args[0])
 			if err != nil {
-				return errors.New("APPID must be an integer")
+				return err
 			}
 			wc, err := workshopClient()
 			if err != nil {
 				return err
 			}
-
-			items := args[1:]
-			if fromCollectionUnsub != "" {
-				coll, err := wc.GetCollectionDetails(cmd.Context(), fromCollectionUnsub)
-				if err != nil {
-					return fmt.Errorf("failed resolving collection items: %w", err)
-				}
-				for _, ch := range coll.Children {
-					items = append(items, ch.PublishedFileID)
-				}
+			items, err := resolveItems(cmd, wc, appID, args[1:], unsubFromCollection, unsubAll, false, false)
+			if err != nil {
+				return err
 			}
-
 			if len(items) == 0 {
-				return errors.New("specify at least one ITEMID or use --from-collection")
+				return errors.New("no items to unsubscribe from; pass ITEMIDs or use --from-collection or --all")
 			}
-
 			results := wc.Unsubscribe(cmd.Context(), appID, items)
-			return o.print(cmd, results)
+			if err := o.print(cmd, summarize(results)); err != nil {
+				return err
+			}
+			return batchErr(results)
 		},
 	}
-	unsub.Flags().StringVar(&fromCollectionUnsub, "from-collection", "", "Unsubscribe from all items in this collection")
+	unsub.Flags().StringVar(&unsubFromCollection, "from-collection", "", "Unsubscribe from every item in this collection")
+	unsub.Flags().BoolVar(&unsubAll, "all", false, "Unsubscribe from every item you are subscribed to for this game")
 
-	// 3. Collection details & inspection
+	// 3. Collection inspection
 	var withItemDetails bool
 	collection := &cobra.Command{
 		Use:   "collection COLLECTION_ID",
@@ -122,41 +223,82 @@ func workshopCommand(o *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-
 			coll, err := wc.GetCollectionDetails(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
-
-			if withItemDetails && len(coll.Children) > 0 {
-				childIDs := make([]string, len(coll.Children))
-				for i, ch := range coll.Children {
-					childIDs[i] = ch.PublishedFileID
-				}
-				details, err := wc.GetDetails(cmd.Context(), childIDs)
-				if err == nil {
-					return o.print(cmd, map[string]any{
-						"collection": coll,
-						"items":      details,
-					})
-				}
+			if !withItemDetails || len(coll.Children) == 0 {
+				return o.print(cmd, coll)
 			}
-
-			return o.print(cmd, coll)
+			childIDs := make([]string, len(coll.Children))
+			for i, ch := range coll.Children {
+				childIDs[i] = ch.PublishedFileID
+			}
+			details, err := wc.GetDetails(cmd.Context(), childIDs)
+			if err != nil {
+				return fmt.Errorf("fetch item details (use --items=false to skip): %w", err)
+			}
+			return o.print(cmd, map[string]any{"collection": coll, "items": details})
 		},
 	}
 	collection.Flags().BoolVar(&withItemDetails, "items", true, "Fetch full metadata for all items in the collection")
 
-	// 3b. List user's subscriptions (for a specific game or all games)
-	var withSubDetails bool
-	var roots []string
-	subsCmd := &cobra.Command{
-		Use:     "subs [APPID]",
-		Aliases: []string{"list-subs", "subscriptions"},
-		Short:   "List subscribed/installed workshop items for a game or all games",
-		Args:    cobra.MaximumNArgs(1),
+	// 4. Subscriptions and favorites, as Steam records them
+	listCmd := func(use, filter, short string, aliases []string) *cobra.Command {
+		var listDetails bool
+		c := &cobra.Command{
+			Use:     use,
+			Aliases: aliases,
+			Short:   short,
+			Args:    cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				appID, err := appIDArg(args[0])
+				if err != nil {
+					return err
+				}
+				wc, err := workshopClient()
+				if err != nil {
+					return err
+				}
+				ids, err := wc.ListUserItems(cmd.Context(), appID, filter)
+				if err != nil {
+					return err
+				}
+				out := map[string]any{"appid": appID, "total": len(ids), "items": ids}
+				if listDetails && len(ids) > 0 {
+					details, err := wc.GetDetails(cmd.Context(), ids)
+					if err != nil {
+						return fmt.Errorf("fetch item details: %w", err)
+					}
+					out["details"] = details
+				}
+				return o.print(cmd, out)
+			},
+		}
+		c.Flags().BoolVar(&listDetails, "details", false, "Fetch title and metadata for each item")
+		return c
+	}
+	subsCmd := listCmd("subs APPID", community.FilterSubscriptions,
+		"List the items you are subscribed to for a game (requires a Community session)",
+		[]string{"subscriptions", "list-subs"})
+	favsCmd := listCmd("favorites APPID", community.FilterFavorites,
+		"List the items you have favorited for a game (requires a Community session)",
+		[]string{"favs", "list-favorites"})
+
+	// 5. Locally installed items
+	var installedRoots []string
+	var installedDetails bool
+	installedCmd := &cobra.Command{
+		Use:     "installed [APPID]",
+		Aliases: []string{"local"},
+		Short:   "List workshop items present on disk (local library state, not subscriptions)",
+		Long: "List workshop items found in local Steam library folders.\n\n" +
+			"This reports disk state. An item you are subscribed to but have not downloaded\n" +
+			"will not appear, and an item left on disk after unsubscribing still will.\n" +
+			"For the account's real subscription list, use 'steam workshop subs'.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			r := roots
+			r := installedRoots
 			if len(r) == 0 {
 				r = library.Defaults()
 			}
@@ -164,135 +306,120 @@ func workshopCommand(o *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-
 			targetAppID := 0
 			if len(args) > 0 {
-				targetAppID, err = strconv.Atoi(args[0])
+				if targetAppID, err = appIDArg(args[0]); err != nil {
+					return err
+				}
+			}
+			apps, err := workshop.ScanInstalled(rep.Libraries, targetAppID)
+			if err != nil {
+				return err
+			}
+			if !installedDetails {
+				return o.print(cmd, apps)
+			}
+			wc, err := workshopClient()
+			if err != nil {
+				return err
+			}
+			var allIDs []string
+			for _, a := range apps {
+				allIDs = append(allIDs, a.Items...)
+			}
+			details, err := wc.GetDetails(cmd.Context(), allIDs)
+			if err != nil {
+				return fmt.Errorf("fetch item details (omit --details to skip): %w", err)
+			}
+			return o.print(cmd, map[string]any{"apps": apps, "items": details})
+		},
+	}
+	installedCmd.Flags().BoolVar(&installedDetails, "details", false, "Fetch title and metadata for installed items")
+	installedCmd.Flags().StringArrayVar(&installedRoots, "root", nil, "Steam root directory; repeat for multiple installations")
+
+	// 6. Search
+	newSearch := func(use, short string, aliases []string, collectionsOnly bool) *cobra.Command {
+		var page, count int
+		var query string
+		var fileType int
+		var all bool
+		c := &cobra.Command{
+			Use:     use,
+			Aliases: aliases,
+			Short:   short,
+			Args:    cobra.RangeArgs(1, 2),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				appID, err := appIDArg(args[0])
 				if err != nil {
-					return errors.New("APPID must be an integer")
+					return err
 				}
-			}
-
-			subscribedApps, err := workshop.ScanLocalSubscriptions(rep.Libraries, targetAppID)
-			if err != nil {
-				return err
-			}
-
-			if withSubDetails {
 				wc, err := workshopClient()
-				if err == nil {
-					allItemIDs := make([]string, 0)
-					for _, sa := range subscribedApps {
-						allItemIDs = append(allItemIDs, sa.Items...)
-					}
-					details, _ := wc.GetDetails(cmd.Context(), allItemIDs)
-					return o.print(cmd, map[string]any{
-						"apps":  subscribedApps,
-						"items": details,
-					})
+				if err != nil {
+					return err
 				}
-			}
+				q := query
+				if len(args) > 1 && q == "" {
+					q = args[1]
+				}
+				ft := fileType
+				if collectionsOnly {
+					ft = 2
+				}
 
-			return o.print(cmd, subscribedApps)
-		},
+				opts := workshop.QueryOptions{
+					AppID:      appID,
+					FileType:   ft,
+					NumPerPage: count,
+					SearchText: q,
+					Page:       page,
+					AllPages:   all,
+				}
+				items, total, err := wc.Query(cmd.Context(), opts)
+				if err != nil {
+					return err
+				}
+				key := "items"
+				if collectionsOnly {
+					key = "collections"
+				}
+				return o.print(cmd, map[string]any{
+					"total": total,
+					"count": len(items),
+					key:     items,
+				})
+			},
+		}
+		c.Flags().IntVar(&page, "page", 1, "Results page number")
+		c.Flags().IntVar(&count, "count", 20, "Number of items per page (max 100)")
+		c.Flags().StringVarP(&query, "query", "q", "", "Search text matched against title and description")
+		c.Flags().BoolVar(&all, "all", false, "Page through every result using Steam's cursor")
+		if !collectionsOnly {
+			c.Flags().IntVar(&fileType, "filetype", -1, "File type filter: 0=item, 2=collection (-1 for all)")
+		}
+		return c
 	}
-	subsCmd.Flags().BoolVar(&withSubDetails, "details", false, "Fetch title and metadata for subscribed items")
-	subsCmd.Flags().StringArrayVar(&roots, "root", nil, "Steam root directory; repeat for multiple installations")
+	searchCmd := newSearch("search APPID [QUERY]", "Search or list workshop items for a game", []string{"search-items"}, false)
+	listColls := newSearch("search-collections APPID [QUERY]", "Search or list workshop collections for a game", []string{"list-collections"}, true)
 
-
-	// 4. Search items & collections
-	var page, count int
-	var query string
-	var searchFileType int
-	searchCmd := &cobra.Command{
-		Use:     "search APPID [QUERY]",
-		Aliases: []string{"search-items"},
-		Short:   "Search or list workshop items for a game",
-		Args:    cobra.RangeArgs(1, 2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			appID, err := strconv.Atoi(args[0])
-			if err != nil {
-				return errors.New("APPID must be an integer")
-			}
-			wc, err := workshopClient()
-			if err != nil {
-				return err
-			}
-
-			q := query
-			if len(args) > 1 && q == "" {
-				q = args[1]
-			}
-
-			items, total, err := wc.QueryItems(cmd.Context(), appID, searchFileType, page, count, q)
-			if err != nil {
-				return err
-			}
-
-			return o.print(cmd, map[string]any{
-				"total": total,
-				"page":  page,
-				"count": len(items),
-				"items": items,
-			})
-		},
-	}
-	searchCmd.Flags().IntVar(&page, "page", 1, "Results page number")
-	searchCmd.Flags().IntVar(&count, "count", 20, "Number of items per page")
-	searchCmd.Flags().StringVarP(&query, "query", "q", "", "Search query for item title/description")
-	searchCmd.Flags().IntVar(&searchFileType, "filetype", -1, "File type filter: 0=Community Item, 2=Collection (-1 for all)")
-
-	// 4b. Search / List collections
-	listColls := &cobra.Command{
-		Use:     "search-collections APPID [QUERY]",
-		Aliases: []string{"list-collections"},
-		Short:   "Search or list workshop collections for a game",
-		Args:    cobra.RangeArgs(1, 2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			appID, err := strconv.Atoi(args[0])
-			if err != nil {
-				return errors.New("APPID must be an integer")
-			}
-			wc, err := workshopClient()
-			if err != nil {
-				return err
-			}
-
-			q := query
-			if len(args) > 1 && q == "" {
-				q = args[1]
-			}
-
-			items, total, err := wc.QueryCollections(cmd.Context(), appID, page, count, q)
-			if err != nil {
-				return err
-			}
-
-			return o.print(cmd, map[string]any{
-				"total":       total,
-				"page":        page,
-				"count":       len(items),
-				"collections": items,
-			})
-		},
-	}
-	listColls.Flags().IntVar(&page, "page", 1, "Results page number")
-	listColls.Flags().IntVar(&count, "count", 20, "Number of items per page")
-	listColls.Flags().StringVarP(&query, "query", "q", "", "Search query for collection title/description")
-
-	// 5. Create collection
+	// 7. Create collection
 	var title, desc string
 	var visibility int
-	var fromSubs, fromFavs bool
+	var createFromSubs, createFromFavs, createFromInstalled bool
+	var createFromCollection string
 	var itemIDs []string
 	createColl := &cobra.Command{
 		Use:   "create-collection APPID --title TITLE",
-		Short: "Create a new workshop collection (supports importing from subscriptions or favorites)",
-		Args:  cobra.ExactArgs(1),
+		Short: "Create a workshop collection, optionally populated from your subscriptions or favorites",
+		Long: "Create a workshop collection.\n\n" +
+			"Creating the collection uses the Steam Web API. Adding items to it does not:\n" +
+			"the Web API has no method that sets collection membership, so items are added\n" +
+			"through an authenticated Community session. Populating a collection therefore\n" +
+			"requires STEAM_LOGIN_SECURE to be set; creating an empty one does not.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appID, err := strconv.Atoi(args[0])
+			appID, err := appIDArg(args[0])
 			if err != nil {
-				return errors.New("APPID must be an integer")
+				return err
 			}
 			if title == "" {
 				return errors.New("--title is required")
@@ -301,119 +428,143 @@ func workshopCommand(o *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-
-			initialItems := append([]string(nil), itemIDs...)
-
-			if fromSubs {
-				rep, err := library.Scan(library.Defaults())
-				if err == nil {
-					subApps, err := workshop.ScanLocalSubscriptions(rep.Libraries, appID)
-					if err == nil {
-						for _, sa := range subApps {
-							initialItems = append(initialItems, sa.Items...)
-						}
-					}
-				}
-			}
-
-			if fromFavs {
-				// Query user's favorites if accessible via API/web
-				favItems, _, err := wc.QueryItems(cmd.Context(), appID, 2, 1, 100, "")
-				if err == nil {
-					for _, fi := range favItems {
-						initialItems = append(initialItems, fi.PublishedFileID)
-					}
-				}
-			}
-
-			// Deduplicate items
-			seen := make(map[string]bool)
-			var deduped []string
-			for _, it := range initialItems {
-				it = strings.TrimSpace(it)
-				if it != "" && !seen[it] {
-					seen[it] = true
-					deduped = append(deduped, it)
-				}
-			}
-
-			id, err := wc.CreateCollection(cmd.Context(), appID, title, desc, visibility, deduped)
+			items, err := resolveItems(cmd, wc, appID, itemIDs, createFromCollection, createFromSubs, createFromFavs, createFromInstalled)
 			if err != nil {
 				return err
 			}
-			return o.print(cmd, map[string]any{
-				"success":         true,
+			id, added, err := wc.CreateCollection(cmd.Context(), appID, title, desc, visibility, items)
+			if err != nil {
+				return err
+			}
+			out := map[string]any{
 				"publishedfileid": id,
 				"title":           title,
-				"items_count":     len(deduped),
-				"items":           deduped,
-			})
+				"url":             "https://steamcommunity.com/sharedfiles/filedetails/?id=" + id,
+				"items_requested": len(items),
+			}
+			if len(added) > 0 {
+				out["items_added"] = summarize(added)
+			}
+			if err := o.print(cmd, out); err != nil {
+				return err
+			}
+			return batchErr(added)
 		},
 	}
 	createColl.Flags().StringVar(&title, "title", "", "Collection title")
 	createColl.Flags().StringVar(&desc, "description", "", "Collection description")
 	createColl.Flags().IntVar(&visibility, "visibility", 0, "Visibility: 0=Public, 1=FriendsOnly, 2=Private")
-	createColl.Flags().BoolVar(&fromSubs, "from-subscriptions", false, "Populate collection with items from local subscriptions for this game")
-	createColl.Flags().BoolVar(&fromFavs, "from-favorites", false, "Populate collection with favorited items for this game")
-	createColl.Flags().StringArrayVar(&itemIDs, "item", nil, "Specify item IDs to include in the collection; repeat for multiple")
+	createColl.Flags().BoolVar(&createFromSubs, "from-subscriptions", false, "Populate from the items you are subscribed to for this game")
+	createColl.Flags().BoolVar(&createFromFavs, "from-favorites", false, "Populate from the items you have favorited for this game")
+	createColl.Flags().BoolVar(&createFromInstalled, "from-installed", false, "Populate from items present in your local library")
+	createColl.Flags().StringVar(&createFromCollection, "from-collection", "", "Populate by copying another collection's items")
+	createColl.Flags().StringArrayVar(&itemIDs, "item", nil, "Item ID to include; repeat for multiple")
 
-	// 6. Edit collection
+	// 8. Edit collection
 	var newTitle, newDesc string
 	var newVisibility int
 	editColl := &cobra.Command{
 		Use:   "edit-collection APPID COLLECTION_ID",
-		Short: "Edit a workshop collection's title, description, or visibility",
+		Short: "Edit a collection's title, description, or visibility",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appID, err := strconv.Atoi(args[0])
+			appID, err := appIDArg(args[0])
 			if err != nil {
-				return errors.New("APPID must be an integer")
+				return err
 			}
 			wc, err := workshopClient()
 			if err != nil {
 				return err
 			}
-
-			err = wc.EditCollection(cmd.Context(), appID, args[1], newTitle, newDesc, newVisibility)
-			if err != nil {
+			if err := wc.EditCollection(cmd.Context(), appID, args[1], newTitle, newDesc, newVisibility); err != nil {
 				return err
 			}
-			return o.print(cmd, map[string]any{
-				"success":         true,
-				"publishedfileid": args[1],
-			})
+			return o.print(cmd, map[string]any{"success": true, "publishedfileid": args[1]})
 		},
 	}
 	editColl.Flags().StringVar(&newTitle, "title", "", "Updated collection title")
 	editColl.Flags().StringVar(&newDesc, "description", "", "Updated collection description")
 	editColl.Flags().IntVar(&newVisibility, "visibility", -1, "Updated visibility: 0=Public, 1=FriendsOnly, 2=Private (-1 leaves unchanged)")
 
-	// 7. Delete collection
+	// 9. Collection membership
+	newMembership := func(use, short string, add bool) *cobra.Command {
+		var fromCollection string
+		var fromSubs, fromFavs, fromInstalled bool
+		c := &cobra.Command{
+			Use:   use,
+			Short: short,
+			Long:  short + ".\n\nCollection membership is not exposed by the Steam Web API, so this requires\nan authenticated Community session (STEAM_LOGIN_SECURE).",
+			Args:  cobra.MinimumNArgs(2),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				appID, err := appIDArg(args[0])
+				if err != nil {
+					return err
+				}
+				wc, err := workshopClient()
+				if err != nil {
+					return err
+				}
+				if !wc.HasSession() {
+					return community.ErrNoSession
+				}
+				items, err := resolveItems(cmd, wc, appID, args[2:], fromCollection, fromSubs, fromFavs, fromInstalled)
+				if err != nil {
+					return err
+				}
+				if len(items) == 0 {
+					return errors.New("no items specified")
+				}
+				var results []workshop.BatchResult
+				if add {
+					results = wc.AddItems(cmd.Context(), args[1], items)
+				} else {
+					results = wc.RemoveItems(cmd.Context(), args[1], items)
+				}
+				if err := o.print(cmd, summarize(results)); err != nil {
+					return err
+				}
+				return batchErr(results)
+			},
+		}
+		c.Flags().StringVar(&fromCollection, "from-collection", "", "Take the items from another collection")
+		c.Flags().BoolVar(&fromSubs, "from-subscriptions", false, "Take the items from your subscriptions for this game")
+		c.Flags().BoolVar(&fromFavs, "from-favorites", false, "Take the items from your favorites for this game")
+		c.Flags().BoolVar(&fromInstalled, "from-installed", false, "Take the items from your local library")
+		return c
+	}
+	addItems := newMembership("add-items APPID COLLECTION_ID [ITEMID...]", "Add items to a collection", true)
+	removeItems := newMembership("remove-items APPID COLLECTION_ID [ITEMID...]", "Remove items from a collection", false)
+
+	// 10. Delete collection
+	var confirmDelete bool
 	deleteColl := &cobra.Command{
 		Use:   "delete-collection APPID COLLECTION_ID",
-		Short: "Delete a workshop collection",
-		Args:  cobra.ExactArgs(2),
+		Short: "Delete a workshop collection you own",
+		Long: "Delete a workshop collection you own.\n\n" +
+			"Prefers your Community session, because IPublishedFileService/Delete is\n" +
+			"publisher-only and rejects ordinary user API keys.",
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appID, err := strconv.Atoi(args[0])
+			appID, err := appIDArg(args[0])
 			if err != nil {
-				return errors.New("APPID must be an integer")
+				return err
+			}
+			if !confirmDelete {
+				return fmt.Errorf("deleting collection %s cannot be undone; pass --yes to proceed", args[1])
 			}
 			wc, err := workshopClient()
 			if err != nil {
 				return err
 			}
-
-			err = wc.DeleteCollection(cmd.Context(), appID, args[1])
-			if err != nil {
+			if err := wc.DeleteCollection(cmd.Context(), appID, args[1]); err != nil {
 				return err
 			}
-			return o.print(cmd, map[string]any{
-				"success":         true,
-				"publishedfileid": args[1],
-			})
+			return o.print(cmd, map[string]any{"success": true, "publishedfileid": args[1]})
 		},
 	}
+	deleteColl.Flags().BoolVar(&confirmDelete, "yes", false, "Confirm the deletion")
 
-	root.AddCommand(sub, unsub, collection, subsCmd, searchCmd, listColls, createColl, editColl, deleteColl)
+	root.AddCommand(sub, unsub, collection, subsCmd, favsCmd, installedCmd, searchCmd, listColls,
+		createColl, editColl, addItems, removeItems, deleteColl)
 	return root
 }
