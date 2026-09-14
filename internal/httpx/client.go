@@ -85,6 +85,23 @@ func Endpoint(base, path string, allowHTTP bool) (string, error) {
 	return u.String(), nil
 }
 
+// validHeaderValue reports whether a value can be sent as a header. RFC 7230
+// permits visible ASCII, space and horizontal tab; anything else, including
+// the terminal escape sequences a mistyped credential can pick up, is refused
+// by net/http with an error that reads like a network failure.
+func validHeaderValue(v string) bool {
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if c == '\t' {
+			continue
+		}
+		if c < ' ' || c == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 // Response carries the parts of an HTTP reply callers need beyond the body.
 // Steam signals API-level failures in headers while still returning 200.
 type Response struct {
@@ -115,6 +132,18 @@ func (c *Client) DoFull(ctx context.Context, method, endpoint string, q url.Valu
 	base.RawQuery = ""
 	if _, e = ValidateURL(base.String(), c.AllowHTTP); e != nil {
 		return Response{}, e
+	}
+	// A credential read from the environment or a file can carry stray control
+	// characters. Go refuses to send such a header, and the resulting error
+	// looks like a network failure; name the real cause instead.
+	for name, values := range headers {
+		for _, v := range values {
+			if !validHeaderValue(v) {
+				return Response{}, fmt.Errorf(
+					"the %s header value cannot be sent: it contains control characters or escape sequences. "+
+						"Check the credential for stray whitespace, newlines, or terminal escapes", name)
+			}
+		}
 	}
 	u.RawQuery = q.Encode()
 	for attempt := 0; ; attempt++ {

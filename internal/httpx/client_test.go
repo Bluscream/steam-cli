@@ -132,3 +132,53 @@ func TestResponseLimit(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+// A credential carrying terminal escapes or newlines must be reported as a bad
+// credential, not as an unreachable host: net/http refuses to send it, and its
+// own error reads like a network failure.
+func TestInvalidHeaderValueIsNamedNotMistakenForNetworkFailure(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer s.Close()
+
+	for _, bad := range []string{
+		"pw\x1b]11;rgb:1a1a/1a1a/1919\x07", // OSC colour-query response
+		"pw\nInjected: header",             // header injection attempt
+		"pw\r\nX: y",
+		"pw\x00",
+	} {
+		_, e := New(time.Second, false, false).Do(
+			context.Background(), "GET", s.URL, nil, nil,
+			http.Header{"Authentication": {bad}})
+		if e == nil {
+			t.Fatalf("value %q should have been refused", bad)
+		}
+		if !strings.Contains(e.Error(), "Authentication header value cannot be sent") {
+			t.Errorf("value %q: error should name the header, got %v", bad, e)
+		}
+		if strings.Contains(e.Error(), "could not reach") {
+			t.Errorf("value %q: must not be reported as unreachable: %v", bad, e)
+		}
+		if strings.Contains(e.Error(), "pw") {
+			t.Errorf("value %q: error leaks the credential: %v", bad, e)
+		}
+	}
+}
+
+func TestValidHeaderValuesStillPass(t *testing.T) {
+	var got string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("Authentication")
+	}))
+	defer s.Close()
+
+	// Tab and the full visible ASCII range are legal in a header value.
+	const ok = "s3cret-Pa$$\tword+/=~"
+	if _, e := New(time.Second, false, false).Do(
+		context.Background(), "GET", s.URL, nil, nil,
+		http.Header{"Authentication": {ok}}); e != nil {
+		t.Fatalf("a legal value was refused: %v", e)
+	}
+	if got != ok {
+		t.Errorf("header = %q, want %q", got, ok)
+	}
+}
