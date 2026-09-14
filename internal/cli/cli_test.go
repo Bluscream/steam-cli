@@ -1204,4 +1204,38 @@ func TestInfoCommand(t *testing.T) {
 	}
 }
 
+func TestLibrarySort(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "steamapps"), 0700)
+
+	// App 730 installed (smaller size)
+	os.WriteFile(filepath.Join(root, "steamapps", "appmanifest_730.acf"), []byte(`"AppState" { "appid" "730" "name" "CS2" "SizeOnDisk" "1000" "installdir" "CS2" }`), 0600)
+	// App 550 installed (larger size)
+	os.WriteFile(filepath.Join(root, "steamapps", "appmanifest_550.acf"), []byte(`"AppState" { "appid" "550" "name" "L4D2" "SizeOnDisk" "9000" "installdir" "L4D2" }`), 0600)
+
+	// Sort by size (descending: 550 before 730)
+	outSize, err := execute(t, "library", "--root", root, "--sort", "size")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	posL4D2 := strings.Index(outSize, "L4D2")
+	posCS2 := strings.Index(outSize, "CS2")
+	if posL4D2 == -1 || posCS2 == -1 || posL4D2 > posCS2 {
+		t.Errorf("expected L4D2 before CS2 when sorting by size, got:\n%s", outSize)
+	}
+
+	// Sort by name (ascending: CS2 before L4D2)
+	outName, err := execute(t, "library", "--root", root, "--sort", "name")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	posL4D2 = strings.Index(outName, "L4D2")
+	posCS2 = strings.Index(outName, "CS2")
+	if posL4D2 == -1 || posCS2 == -1 || posCS2 > posL4D2 {
+		t.Errorf("expected CS2 before L4D2 when sorting by name, got:\n%s", outName)
+	}
+}
+
+
 

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
@@ -16,6 +18,7 @@ import (
 func libraryCommand(o *options) *cobra.Command {
 	var roots []string
 	var customOnly bool
+	var sortField string
 	c := &cobra.Command{Use: "library", Short: "Inspect installed games and Steam library folders offline", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		r := roots
 		if len(r) == 0 {
@@ -35,6 +38,43 @@ func libraryCommand(o *options) *cobra.Command {
 			}
 			apps = filtered
 		}
+
+		switch strings.ToLower(sortField) {
+		case "appid":
+			sort.Slice(apps, func(i, j int) bool {
+				idI, _ := strconv.Atoi(apps[i].AppID)
+				idJ, _ := strconv.Atoi(apps[j].AppID)
+				if idI != idJ {
+					return idI < idJ
+				}
+				return apps[i].AppID < apps[j].AppID
+			})
+		case "name":
+			sort.Slice(apps, func(i, j int) bool {
+				return strings.ToLower(apps[i].Name) < strings.ToLower(apps[j].Name)
+			})
+		case "size":
+			sort.Slice(apps, func(i, j int) bool {
+				sizeI, _ := strconv.ParseInt(apps[i].SizeOnDisk, 10, 64)
+				sizeJ, _ := strconv.ParseInt(apps[j].SizeOnDisk, 10, 64)
+				if sizeI != sizeJ {
+					return sizeI > sizeJ // Largest first
+				}
+				return apps[i].AppID < apps[j].AppID
+			})
+		case "library", "path":
+			sort.Slice(apps, func(i, j int) bool {
+				if apps[i].Library != apps[j].Library {
+					return apps[i].Library < apps[j].Library
+				}
+				return apps[i].Name < apps[j].Name
+			})
+		case "":
+			// Default order: AppID ascending (as returned by library.Scan)
+		default:
+			return fmt.Errorf("invalid --sort value %q: expected appid, name, size, or library", sortField)
+		}
+
 		return o.emit(cmd, apps, func(w io.Writer) {
 			t := o.newTable(w)
 			if customOnly {
@@ -79,6 +119,7 @@ func libraryCommand(o *options) *cobra.Command {
 	}}
 	c.Flags().StringArrayVar(&roots, "root", nil, "Steam root directory; repeat for multiple installations")
 	c.Flags().BoolVar(&customOnly, "custom", false, "Only list games with custom compatibility tools or launch options set")
+	c.Flags().StringVar(&sortField, "sort", "", "Sort apps by: appid, name, size, library")
 
 	customSub := &cobra.Command{
 		Use:     "custom",
@@ -91,6 +132,7 @@ func libraryCommand(o *options) *cobra.Command {
 		},
 	}
 	customSub.Flags().StringArrayVar(&roots, "root", nil, "Steam root directory; repeat for multiple installations")
+	customSub.Flags().StringVar(&sortField, "sort", "", "Sort apps by: appid, name, size, library")
 	c.AddCommand(customSub)
 	return c
 }

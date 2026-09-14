@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -40,13 +41,23 @@ type asfInfoData struct {
 	Error        string `json:"error,omitempty"`
 }
 
+type libraryFolderInfo struct {
+	Path       string `json:"path"`
+	AppsCount  int    `json:"apps_count"`
+	SizeBytes  int64  `json:"size_bytes"`
+	SizeHuman  string `json:"size_human"`
+}
+
 type clientInfoData struct {
-	Platform       string `json:"platform"`
-	Profile        string `json:"profile"`
-	SteamPath      string `json:"steam_path,omitempty"`
-	SteamCMDPath   string `json:"steamcmd_path,omitempty"`
-	LibrariesCount int    `json:"libraries_count"`
-	InstalledApps  int    `json:"installed_apps"`
+	Platform       string              `json:"platform"`
+	Profile        string              `json:"profile"`
+	SteamPath      string              `json:"steam_path,omitempty"`
+	SteamCMDPath   string              `json:"steamcmd_path,omitempty"`
+	LibrariesCount int                 `json:"libraries_count"`
+	InstalledApps  int                 `json:"installed_apps"`
+	Libraries      []libraryFolderInfo `json:"libraries,omitempty"`
+	TotalSizeBytes int64               `json:"total_size_bytes"`
+	TotalSizeHuman string              `json:"total_size_human"`
 }
 
 type aggregatedInfo struct {
@@ -255,6 +266,31 @@ func infoCommand(o *options) *cobra.Command {
 				if err == nil {
 					clientData.LibrariesCount = len(rep.Libraries)
 					clientData.InstalledApps = len(rep.Apps)
+
+					libApps := make(map[string]int)
+					libSize := make(map[string]int64)
+					var totalBytes int64
+					for _, app := range rep.Apps {
+						libApps[app.Library]++
+						if n, err := strconv.ParseInt(app.SizeOnDisk, 10, 64); err == nil && n > 0 {
+							libSize[app.Library] += n
+							totalBytes += n
+						}
+					}
+
+					var libFolders []libraryFolderInfo
+					for _, lib := range rep.Libraries {
+						sz := libSize[lib]
+						libFolders = append(libFolders, libraryFolderInfo{
+							Path:       lib,
+							AppsCount:  libApps[lib],
+							SizeBytes:  sz,
+							SizeHuman:  humanBytes(sz),
+						})
+					}
+					clientData.Libraries = libFolders
+					clientData.TotalSizeBytes = totalBytes
+					clientData.TotalSizeHuman = humanBytes(totalBytes)
 				}
 
 				mu.Lock()
@@ -341,10 +377,24 @@ func infoCommand(o *options) *cobra.Command {
 						kv("Profile", info.Client.Profile),
 						kv("Steam client", steamPath),
 						kv("SteamCMD", cmdPath),
-						kv("Library folders", fmt.Sprint(info.Client.LibrariesCount)),
 						kv("Installed games", fmt.Sprint(info.Client.InstalledApps)),
 					)
 					o.renderTable(t)
+
+					if len(info.Client.Libraries) > 0 {
+						o.heading(w, "Library Folders")
+						lt := o.newTable(w)
+						lt.AppendHeader(table.Row{"Library Path", "Apps", "Size"})
+						lt.SetColumnConfigs([]table.ColumnConfig{
+							{Number: 2, Align: text.AlignRight},
+							{Number: 3, Align: text.AlignRight},
+						})
+						for _, lib := range info.Client.Libraries {
+							lt.AppendRow(table.Row{lib.Path, lib.AppsCount, lib.SizeHuman})
+						}
+						lt.AppendFooter(table.Row{"Total", info.Client.InstalledApps, info.Client.TotalSizeHuman})
+						o.renderTable(lt)
+					}
 				}
 
 				// 5. ArchiSteamFarm Status (if available)

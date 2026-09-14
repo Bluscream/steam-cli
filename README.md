@@ -318,6 +318,7 @@ Commands that act on bots take a selector: a positional argument, the persistent
 
 ```sh
 ./bin/steamcli --offline library
+./bin/steamcli --offline library --sort size          # sort by: size, name, appid, library
 ./bin/steamcli --offline library custom               # aliases: overrides, compat, launch-options, args
 ./bin/steamcli --offline library --custom             # filter installed games to those with custom compat/args
 ./bin/steamcli --offline library --root /path/to/Steam
