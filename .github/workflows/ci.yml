@@ -1,0 +1,19 @@
+name: test
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - run: go test -mod=vendor -race ./...
+      - run: go vet -mod=vendor ./...
+      - run: go build -mod=vendor -trimpath -o steam-test ./cmd/steam

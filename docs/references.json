@@ -1,0 +1,84 @@
+[
+  {
+    "directory": ".references/asf",
+    "url": "https://github.com/JustArchiNET/ArchiSteamFarm.git",
+    "commit": "2d9ca13acc8d951e1b7924c52e5bc4e41410c053",
+    "commit_date": "2026-09-13T14:30:58Z",
+    "license_files": [
+      "LICENSE.txt"
+    ]
+  },
+  {
+    "directory": ".references/game-fetcher-cli",
+    "url": "https://github.com/Austrum-lab/game-fetcher-cli.git",
+    "commit": "33671e8042cde7a91c275dcbf076e6b29307f3dd",
+    "commit_date": "2026-07-17T15:43:08+04:00",
+    "license_files": [
+      "LICENSE"
+    ]
+  },
+  {
+    "directory": ".references/go-steam",
+    "url": "https://github.com/faceit/go-steam.git",
+    "commit": "2be7df6980e1e2f31e04a7fe47e771591b0e37d5",
+    "commit_date": "2019-02-05T18:12:51-08:00",
+    "license_files": [
+      "LICENSE.txt"
+    ]
+  },
+  {
+    "directory": ".references/go-steamapi",
+    "url": "https://github.com/Philipp15b/go-steamapi.git",
+    "commit": "ec4fdd23b4c1e6c2bb080de1ed88781872ca9060",
+    "commit_date": "2021-01-14T16:33:16+01:00",
+    "license_files": [
+      "LICENSE"
+    ]
+  },
+  {
+    "directory": ".references/node-steam-user",
+    "url": "https://github.com/DoctorMcKay/node-steam-user.git",
+    "commit": "02818bd08090b58ff54f1d9ce0073319b8e1eef7",
+    "commit_date": "2025-12-04T06:57:15-05:00",
+    "license_files": [
+      "LICENSE"
+    ]
+  },
+  {
+    "directory": ".references/python-steam",
+    "url": "https://github.com/ValvePython/steam.git",
+    "commit": "26166e047b66a7be10bdf3c90e2e14de9283ab5a",
+    "commit_date": "2023-05-06T00:25:11+01:00",
+    "license_files": [
+      "LICENSE"
+    ]
+  },
+  {
+    "directory": ".references/steam-tui",
+    "url": "https://github.com/dmadisetti/steam-tui.git",
+    "commit": "fc56bfeff38d21e43c39da1cce7b5e0ff4001a9f",
+    "commit_date": "2026-03-12T09:21:50-07:00",
+    "license_files": [
+      "LICENSE"
+    ]
+  },
+  {
+    "directory": ".references/steamctl",
+    "url": "https://github.com/ValvePython/steamctl.git",
+    "commit": "274a8db0ccedb7cf1f80546581916874c20dc317",
+    "commit_date": "2022-10-17T18:04:46Z",
+    "license_files": [
+      "LICENSE"
+    ]
+  },
+  {
+    "directory": ".references/steamworks-rs",
+    "url": "https://github.com/Noxime/steamworks-rs.git",
+    "commit": "6e4a2bcf54f2b520e35db092c5fcf47774f3792a",
+    "commit_date": "2026-08-27T08:05:53Z",
+    "license_files": [
+      "LICENSE-APACHE",
+      "LICENSE-MIT"
+    ]
+  }
+]

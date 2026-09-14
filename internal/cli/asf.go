@@ -1,0 +1,132 @@
+package cli
+
+import (
+	"encoding/json"
+	"github.com/spf13/cobra"
+	"steamcli.local/steam/internal/asf"
+	"strings"
+)
+
+func asfCommand(o *options) *cobra.Command {
+	var base string
+	root := &cobra.Command{Use: "asf", Short: "Control an ArchiSteamFarm instance through its IPC API"}
+	root.PersistentFlags().StringVar(&base, "url", "", "ASF base URL, including optional reverse-proxy prefix")
+	client := func() (*asf.Client, error) {
+		s, e := o.settings()
+		if e != nil {
+			return nil, e
+		}
+		p, e := s.ASFPassword()
+		if e != nil {
+			return nil, e
+		}
+		u := s.ASFURL
+		if base != "" {
+			u = base
+		}
+		return &asf.Client{HTTP: o.http(), BaseURL: u, Password: p}, nil
+	}
+	emit := func(cmd *cobra.Command, b []byte, e error) error {
+		if len(b) > 0 {
+			if pe := o.printBytes(cmd, b); pe != nil {
+				return pe
+			}
+		}
+		return e
+	}
+	for _, h := range []struct{ use, short, path string }{{"status", "ASF process information", "Api/ASF"}, {"schema", "OpenAPI schema from this ASF version", "swagger/ASF/swagger.json"}} {
+		root.AddCommand(&cobra.Command{Use: h.use, Short: h.short, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+			c, e := client()
+			if e != nil {
+				return e
+			}
+			b, e := c.Call(cmd.Context(), "GET", h.path, nil, nil)
+			return emit(cmd, b, e)
+		}})
+	}
+	bots := &cobra.Command{Use: "bots [SELECTOR]", Short: "Read bot information (default: ASF = all bots)", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		s := "ASF"
+		if len(args) > 0 {
+			s = args[0]
+		}
+		p, e := asf.BotPath(s, "")
+		if e != nil {
+			return e
+		}
+		c, e := client()
+		if e != nil {
+			return e
+		}
+		b, e := c.Call(cmd.Context(), "GET", p, nil, nil)
+		return emit(cmd, b, e)
+	}}
+	command := &cobra.Command{Use: "command COMMAND...", Short: "Execute an ASF command as IPC owner (can change account state)", Args: cobra.MinimumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		c, e := client()
+		if e != nil {
+			return e
+		}
+		b, e := c.Command(cmd.Context(), strings.Join(args, " "))
+		return emit(cmd, b, e)
+	}}
+	var data string
+	var values []string
+	call := &cobra.Command{Use: "call METHOD PATH", Short: "Call any ASF API/plugin endpoint; supports JSON and query parameters", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		q, e := params(values)
+		if e != nil {
+			return e
+		}
+		body, e := bodyInput(cmd, data)
+		if e != nil {
+			return e
+		}
+		c, e := client()
+		if e != nil {
+			return e
+		}
+		b, e := c.Call(cmd.Context(), args[0], args[1], q, body)
+		return emit(cmd, b, e)
+	}}
+	call.Flags().StringVarP(&data, "data", "d", "", "JSON, @file, or - for stdin")
+	call.Flags().StringArrayVarP(&values, "param", "p", nil, "Query parameter NAME=VALUE (use env/file for IPC password)")
+	root.AddCommand(bots, command, call)
+	for _, action := range []string{"start", "stop", "pause", "resume"} {
+		var permanent bool
+		var resume uint16
+		c := &cobra.Command{Use: action + " SELECTOR", Short: strings.Title(action) + " selected bots", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+			p, e := asf.BotPath(args[0], strings.Title(action))
+			if e != nil {
+				return e
+			}
+			c, e := client()
+			if e != nil {
+				return e
+			}
+			var body []byte
+			if action == "pause" {
+				body, _ = json.Marshal(map[string]any{"Permanent": permanent, "ResumeInSeconds": resume})
+			}
+			b, e := c.Call(cmd.Context(), "POST", p, nil, body)
+			return emit(cmd, b, e)
+		}}
+		if action == "pause" {
+			c.Flags().BoolVar(&permanent, "permanent", false, "Pause permanently")
+			c.Flags().Uint16Var(&resume, "resume-in", 0, "Automatically resume after this many seconds")
+		}
+		root.AddCommand(c)
+	}
+	token := &cobra.Command{Use: "token SELECTOR", Short: "Retrieve two-factor tokens (sensitive stdout)", Args: cobra.ExactArgs(1)}
+	token.RunE = func(cmd *cobra.Command, args []string) error {
+		p, e := asf.BotPath(args[0], "TwoFactorAuthentication/Token")
+		if e != nil {
+			return e
+		}
+		c, e := client()
+		if e != nil {
+			return e
+		}
+		b, e := c.Call(cmd.Context(), "GET", p, nil, nil)
+		return emit(cmd, b, e)
+	}
+	root.AddCommand(token)
+	return root
+}

@@ -1,0 +1,17 @@
+{
+  "default_profile": "default",
+  "profiles": {
+    "default": {
+      "web_url": "https://api.steampowered.com",
+      "web_key_env": "STEAM_WEB_API_KEY",
+      "asf_url": "http://127.0.0.1:1242",
+      "asf_password_env": "ASF_IPC_PASSWORD"
+    },
+    "partner": {
+      "web_url": "https://partner.steam-api.com",
+      "web_key_env": "STEAM_PARTNER_API_KEY",
+      "asf_url": "http://127.0.0.1:1242",
+      "asf_password_env": "ASF_IPC_PASSWORD"
+    }
+  }
+}
