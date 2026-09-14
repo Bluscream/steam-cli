@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
 	"steamcli.local/steam/internal/webapi"
 )
@@ -127,20 +128,20 @@ func webCommand(o *options) *cobra.Command {
 		render func(*options, io.Writer, []byte) bool
 	}
 	helpers := []helper{
-		{"server-info", "Steam server time and version", "ISteamWebAPIUtil", "GetServerInfo", nil, 1, 0, func([]string) url.Values { return nil }, nil},
+		{"server-info", "Steam server time and version", "ISteamWebAPIUtil", "GetServerInfo", nil, 1, 0, func([]string) url.Values { return nil }, renderServerInfo},
 		{"player STEAMID[,STEAMID...]", "Player summaries (SteamID64)", "ISteamUser", "GetPlayerSummaries",
 			[]string{"profile", "profiles"}, 2, 1,
 			func(a []string) url.Values { return url.Values{"steamids": {a[0]}} }, renderPlayers},
-		{"resolve VANITY", "Resolve a vanity profile name to SteamID64", "ISteamUser", "ResolveVanityURL", nil, 1, 1, func(a []string) url.Values { return url.Values{"vanityurl": {a[0]}} }, nil},
+		{"resolve VANITY", "Resolve a vanity profile name to SteamID64", "ISteamUser", "ResolveVanityURL", nil, 1, 1, func(a []string) url.Values { return url.Values{"vanityurl": {a[0]}} }, renderResolve},
 		{"owned STEAMID", "Owned games visible to your API key", "IPlayerService", "GetOwnedGames", nil, 1, 1, func(a []string) url.Values {
 			return url.Values{"steamid": {a[0]}, "include_appinfo": {"1"}, "include_played_free_games": {"1"}}
-		}, nil},
-		{"recent STEAMID", "Recently played games", "IPlayerService", "GetRecentlyPlayedGames", nil, 1, 1, func(a []string) url.Values { return url.Values{"steamid": {a[0]}} }, nil},
-		{"friends STEAMID", "Visible friend list", "ISteamUser", "GetFriendList", nil, 1, 1, func(a []string) url.Values { return url.Values{"steamid": {a[0]}, "relationship": {"friend"}} }, nil},
-		{"bans STEAMID[,STEAMID...]", "Public player ban information", "ISteamUser", "GetPlayerBans", nil, 1, 1, func(a []string) url.Values { return url.Values{"steamids": {a[0]}} }, nil},
+		}, renderOwned},
+		{"recent STEAMID", "Recently played games", "IPlayerService", "GetRecentlyPlayedGames", nil, 1, 1, func(a []string) url.Values { return url.Values{"steamid": {a[0]}} }, renderRecent},
+		{"friends STEAMID", "Visible friend list", "ISteamUser", "GetFriendList", nil, 1, 1, func(a []string) url.Values { return url.Values{"steamid": {a[0]}, "relationship": {"friend"}} }, renderFriends},
+		{"bans STEAMID[,STEAMID...]", "Public player ban information", "ISteamUser", "GetPlayerBans", nil, 1, 1, func(a []string) url.Values { return url.Values{"steamids": {a[0]}} }, renderBans},
 		{"achievements STEAMID APPID", "Player achievements for a game", "ISteamUserStats", "GetPlayerAchievements", nil, 1, 2, func(a []string) url.Values { return url.Values{"steamid": {a[0]}, "appid": {a[1]}} }, nil},
-		{"news APPID", "Recent game news", "ISteamNews", "GetNewsForApp", nil, 2, 1, func(a []string) url.Values { return url.Values{"appid": {a[0]}, "count": {strconv.Itoa(10)}} }, nil},
-		{"players APPID", "Current player count", "ISteamUserStats", "GetNumberOfCurrentPlayers", nil, 1, 1, func(a []string) url.Values { return url.Values{"appid": {a[0]}} }, nil},
+		{"news APPID", "Recent game news", "ISteamNews", "GetNewsForApp", nil, 2, 1, func(a []string) url.Values { return url.Values{"appid": {a[0]}, "count": {strconv.Itoa(10)}} }, renderNews},
+		{"players APPID", "Current player count", "ISteamUserStats", "GetNumberOfCurrentPlayers", nil, 1, 1, func(a []string) url.Values { return url.Values{"appid": {a[0]}} }, renderPlayerCount},
 	}
 	for _, h := range helpers {
 		root.AddCommand(&cobra.Command{Use: h.name, Aliases: h.aliases, Short: h.short, Args: cobra.ExactArgs(h.n), RunE: func(cmd *cobra.Command, args []string) error {
@@ -343,4 +344,350 @@ func locality(p playerSummary) string {
 		return p.Country + "-" + p.StateCode
 	}
 	return p.Country
+}
+
+// --- server info ------------------------------------------------------------
+
+func renderServerInfo(o *options, w io.Writer, b []byte) bool {
+	var res struct {
+		ServerTime       int64  `json:"servertime"`
+		ServerTimeString string `json:"servertimestring"`
+	}
+	if json.Unmarshal(b, &res) != nil || res.ServerTime == 0 {
+		return false
+	}
+	t := o.newDetail(w)
+	detailRows(t,
+		kv("Server time", res.ServerTimeString),
+		kv("Unix timestamp", fmt.Sprint(res.ServerTime)),
+		kv("UTC time", time.Unix(res.ServerTime, 0).UTC().Format("2006-01-02 15:04:05 UTC")),
+	)
+	t.Render()
+	return true
+}
+
+// --- resolve vanity ---------------------------------------------------------
+
+func renderResolve(o *options, w io.Writer, b []byte) bool {
+	var res struct {
+		Response struct {
+			SteamID string `json:"steamid"`
+			Success int    `json:"success"`
+			Message string `json:"message"`
+		} `json:"response"`
+	}
+	if json.Unmarshal(b, &res) != nil {
+		return false
+	}
+	if res.Response.Success != 1 || res.Response.SteamID == "" {
+		msg := res.Response.Message
+		if msg == "" {
+			msg = "No match was found for that vanity URL name"
+		}
+		fmt.Fprintf(w, "%s %s\n", red.Sprint("Error:"), msg)
+		return true
+	}
+	id := res.Response.SteamID
+	t := o.newDetail(w)
+	detailRows(t,
+		kv("SteamID64", id),
+		kv("Profile URL", "https://steamcommunity.com/profiles/"+id),
+	)
+	if conv, err := convertID(id); err == nil {
+		detailRows(t,
+			kv("SteamID3", conv["steamid3"]),
+			kv("SteamID2", conv["steamid2"]),
+		)
+	}
+	t.Render()
+	return true
+}
+
+// --- player bans ------------------------------------------------------------
+
+type playerBan struct {
+	SteamID          string `json:"SteamId"`
+	CommunityBanned  bool   `json:"CommunityBanned"`
+	VACBanned        bool   `json:"VACBanned"`
+	NumberOfVACBans  int    `json:"NumberOfVACBans"`
+	DaysSinceLastBan int    `json:"DaysSinceLastBan"`
+	NumberOfGameBans int    `json:"NumberOfGameBans"`
+	EconomyBan       string `json:"EconomyBan"`
+}
+
+func renderBans(o *options, w io.Writer, b []byte) bool {
+	var res struct {
+		Players []playerBan `json:"players"`
+	}
+	if json.Unmarshal(b, &res) != nil || res.Players == nil {
+		return false
+	}
+	if len(res.Players) == 0 {
+		fmt.Fprintln(w, "No ban information returned.")
+		return true
+	}
+	if len(res.Players) == 1 {
+		p := res.Players[0]
+		t := o.newDetail(w)
+		detailRows(t,
+			kv("SteamID64", p.SteamID),
+			kv("Community ban", colorBan(p.CommunityBanned)),
+			kv("VAC ban", colorBan(p.VACBanned)),
+			kv("VAC bans count", fmt.Sprint(p.NumberOfVACBans)),
+			kv("Game bans count", fmt.Sprint(p.NumberOfGameBans)),
+			kv("Days since last ban", fmt.Sprint(p.DaysSinceLastBan)),
+			kv("Economy ban", colorEconomyBan(p.EconomyBan)),
+		)
+		t.Render()
+		return true
+	}
+
+	t := o.newTable(w)
+	t.AppendHeader(table.Row{"SteamID64", "Community", "VAC", "VAC Bans", "Game Bans", "Last Ban (Days)", "Economy"})
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{Number: 4, Align: text.AlignRight},
+		{Number: 5, Align: text.AlignRight},
+		{Number: 6, Align: text.AlignRight},
+	})
+	for _, p := range res.Players {
+		t.AppendRow(table.Row{
+			p.SteamID,
+			colorBan(p.CommunityBanned),
+			colorBan(p.VACBanned),
+			p.NumberOfVACBans,
+			p.NumberOfGameBans,
+			p.DaysSinceLastBan,
+			colorEconomyBan(p.EconomyBan),
+		})
+	}
+	t.Render()
+	fmt.Fprintln(w, faint(fmt.Sprintf("%d player(s).", len(res.Players))))
+	return true
+}
+
+func colorBan(banned bool) string {
+	if banned {
+		return red.Sprint("BANNED")
+	}
+	return green.Sprint("none")
+}
+
+func colorEconomyBan(status string) string {
+	if strings.ToLower(status) == "none" || status == "" {
+		return green.Sprint("none")
+	}
+	return red.Sprint(strings.ToUpper(status))
+}
+
+// --- friends list -----------------------------------------------------------
+
+type friendItem struct {
+	SteamID      string `json:"steamid"`
+	Relationship string `json:"relationship"`
+	FriendSince  int64  `json:"friend_since"`
+}
+
+func renderFriends(o *options, w io.Writer, b []byte) bool {
+	var res struct {
+		FriendsList struct {
+			Friends []friendItem `json:"friends"`
+		} `json:"friendslist"`
+	}
+	if json.Unmarshal(b, &res) != nil || res.FriendsList.Friends == nil {
+		return false
+	}
+	friends := res.FriendsList.Friends
+	if len(friends) == 0 {
+		fmt.Fprintln(w, "Friend list is empty or private.")
+		return true
+	}
+	sort.Slice(friends, func(i, j int) bool { return friends[i].FriendSince > friends[j].FriendSince })
+
+	t := o.newTable(w)
+	t.AppendHeader(table.Row{"SteamID64", "Relationship", "Friend Since"})
+	for _, f := range friends {
+		since := ""
+		if f.FriendSince > 0 {
+			since = time.Unix(f.FriendSince, 0).UTC().Format("2006-01-02 15:04 UTC")
+		}
+		t.AppendRow(table.Row{f.SteamID, f.Relationship, since})
+	}
+	t.Render()
+	fmt.Fprintln(w, faint(fmt.Sprintf("%d friend(s).", len(friends))))
+	return true
+}
+
+// --- owned games ------------------------------------------------------------
+
+type ownedGame struct {
+	AppID                  int    `json:"appid"`
+	Name                   string `json:"name"`
+	Playtime2Weeks         int    `json:"playtime_2weeks"`
+	PlaytimeForever        int    `json:"playtime_forever"`
+	PlaytimeWindowsForever int    `json:"playtime_windows_forever"`
+	PlaytimeMacForever     int    `json:"playtime_mac_forever"`
+	PlaytimeLinuxForever   int    `json:"playtime_linux_forever"`
+}
+
+func renderOwned(o *options, w io.Writer, b []byte) bool {
+	var res struct {
+		Response struct {
+			GameCount int         `json:"game_count"`
+			Games     []ownedGame `json:"games"`
+		} `json:"response"`
+	}
+	if json.Unmarshal(b, &res) != nil {
+		return false
+	}
+	if len(res.Response.Games) == 0 {
+		if strings.Contains(string(b), `"game_count"`) || strings.Contains(string(b), `"games"`) {
+			fmt.Fprintln(w, "No owned games visible (profile games library may be private).")
+			return true
+		}
+		return false
+	}
+	games := res.Response.Games
+	sort.Slice(games, func(i, j int) bool { return games[i].PlaytimeForever > games[j].PlaytimeForever })
+
+	t := o.newTable(w)
+	t.AppendHeader(table.Row{"AppID", "Name", "Total Playtime", "Recent (2 wks)"})
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{Number: 3, Align: text.AlignRight},
+		{Number: 4, Align: text.AlignRight},
+	})
+	for _, g := range games {
+		name := g.Name
+		if name == "" {
+			name = faint("(AppID " + strconv.Itoa(g.AppID) + ")")
+		} else {
+			name = truncate(name, 45)
+		}
+		recent := ""
+		if g.Playtime2Weeks > 0 {
+			recent = formatPlaytime(g.Playtime2Weeks)
+		}
+		t.AppendRow(table.Row{g.AppID, name, formatPlaytime(g.PlaytimeForever), recent})
+	}
+	t.Render()
+	fmt.Fprintln(w, faint(fmt.Sprintf("%d owned game(s).", len(games))))
+	return true
+}
+
+func formatPlaytime(minutes int) string {
+	if minutes <= 0 {
+		return "0 hrs"
+	}
+	hrs := float64(minutes) / 60.0
+	if hrs < 0.1 {
+		return fmt.Sprintf("%d mins", minutes)
+	}
+	return fmt.Sprintf("%.1f hrs", hrs)
+}
+
+// --- recent games -----------------------------------------------------------
+
+func renderRecent(o *options, w io.Writer, b []byte) bool {
+	var res struct {
+		Response struct {
+			TotalCount int         `json:"total_count"`
+			Games      []ownedGame `json:"games"`
+		} `json:"response"`
+	}
+	if json.Unmarshal(b, &res) != nil {
+		return false
+	}
+	if len(res.Response.Games) == 0 {
+		if strings.Contains(string(b), `"total_count"`) || strings.Contains(string(b), `"games"`) {
+			fmt.Fprintln(w, "No recently played games recorded in the last 2 weeks.")
+			return true
+		}
+		return false
+	}
+	games := res.Response.Games
+	sort.Slice(games, func(i, j int) bool { return games[i].Playtime2Weeks > games[j].Playtime2Weeks })
+
+	t := o.newTable(w)
+	t.AppendHeader(table.Row{"AppID", "Name", "Past 2 Weeks", "Total Playtime"})
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{Number: 3, Align: text.AlignRight},
+		{Number: 4, Align: text.AlignRight},
+	})
+	for _, g := range games {
+		name := g.Name
+		if name == "" {
+			name = faint("(AppID " + strconv.Itoa(g.AppID) + ")")
+		} else {
+			name = truncate(name, 45)
+		}
+		t.AppendRow(table.Row{g.AppID, name, formatPlaytime(g.Playtime2Weeks), formatPlaytime(g.PlaytimeForever)})
+	}
+	t.Render()
+	fmt.Fprintln(w, faint(fmt.Sprintf("%d recently played game(s).", len(games))))
+	return true
+}
+
+// --- app news ---------------------------------------------------------------
+
+type newsItem struct {
+	GID       string `json:"gid"`
+	Title     string `json:"title"`
+	URL       string `json:"url"`
+	Author    string `json:"author"`
+	FeedLabel string `json:"feedlabel"`
+	Date      int64  `json:"date"`
+}
+
+func renderNews(o *options, w io.Writer, b []byte) bool {
+	var res struct {
+		AppNews struct {
+			AppID     int        `json:"appid"`
+			NewsItems []newsItem `json:"newsitems"`
+			Count     int        `json:"count"`
+		} `json:"appnews"`
+	}
+	if json.Unmarshal(b, &res) != nil || res.AppNews.NewsItems == nil {
+		return false
+	}
+	items := res.AppNews.NewsItems
+	if len(items) == 0 {
+		fmt.Fprintln(w, "No news items returned.")
+		return true
+	}
+	t := o.newTable(w)
+	t.AppendHeader(table.Row{"Date", "Title", "Author", "Feed"})
+	for _, item := range items {
+		d := ""
+		if item.Date > 0 {
+			d = time.Unix(item.Date, 0).UTC().Format("2006-01-02")
+		}
+		t.AppendRow(table.Row{
+			d,
+			truncate(item.Title, 52),
+			truncate(item.Author, 16),
+			item.FeedLabel,
+		})
+	}
+	t.Render()
+	fmt.Fprintln(w, faint(fmt.Sprintf("%d news article(s).", len(items))))
+	return true
+}
+
+// --- player count -----------------------------------------------------------
+
+func renderPlayerCount(o *options, w io.Writer, b []byte) bool {
+	var res struct {
+		Response struct {
+			PlayerCount int `json:"player_count"`
+			Result      int `json:"result"`
+		} `json:"response"`
+	}
+	if json.Unmarshal(b, &res) != nil || res.Response.Result != 1 {
+		return false
+	}
+	t := o.newDetail(w)
+	detailRows(t,
+		kv("Online players", thousands(res.Response.PlayerCount)),
+	)
+	t.Render()
+	return true
 }

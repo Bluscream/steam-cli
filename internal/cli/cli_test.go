@@ -863,7 +863,7 @@ func TestWebPlayersIsNotShadowedByPlayerAliases(t *testing.T) {
 	if !strings.Contains(gotPath, "GetNumberOfCurrentPlayers") {
 		t.Errorf("web players hit %q, want the player-count endpoint", gotPath)
 	}
-	if !strings.Contains(out, "1234") {
+	if !strings.Contains(out, "1,234") {
 		t.Errorf("player count missing:\n%s", out)
 	}
 }
@@ -911,3 +911,52 @@ func TestWebProfileUnknownSteamID(t *testing.T) {
 		t.Errorf("an empty result should be explained:\n%s", out)
 	}
 }
+
+func TestWebBansRendering(t *testing.T) {
+	cleanEnv(t)
+	body := `{"players":[{"SteamId":"76561197960287930","CommunityBanned":false,"VACBanned":true,"NumberOfVACBans":1,"DaysSinceLastBan":123,"NumberOfGameBans":0,"EconomyBan":"none"}]}`
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(body))
+	}))
+	defer s.Close()
+
+	out, err := execute(t, "web", "--url", s.URL, "bans", "76561197960287930")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"76561197960287930", "VAC ban", "BANNED", "123"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("bans output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestWebServerInfoAndResolveRendering(t *testing.T) {
+	cleanEnv(t)
+	infoServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"servertime":1789413416,"servertimestring":"Mon Sep 14 12:16:56 2026"}`))
+	}))
+	defer infoServer.Close()
+
+	out, err := execute(t, "web", "--url", infoServer.URL, "server-info")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Server time") || !strings.Contains(out, "1789413416") {
+		t.Errorf("server-info missing fields:\n%s", out)
+	}
+
+	resolveServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"response":{"steamid":"76561197960287930","success":1}}`))
+	}))
+	defer resolveServer.Close()
+
+	out, err = execute(t, "web", "--url", resolveServer.URL, "resolve", "gabe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "76561197960287930") || !strings.Contains(out, "[U:1:22202]") {
+		t.Errorf("resolve missing fields:\n%s", out)
+	}
+}
+
