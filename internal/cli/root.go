@@ -22,11 +22,11 @@ var Version = "0.1.0-dev"
 type options struct {
 	configPath, profile, format, color string
 	timeout                            time.Duration
-	offline, allowHTTP                 bool
+	offline, allowHTTP, withHeader     bool
 }
 
 func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
-	o := &options{}
+	o := &options{withHeader: true}
 	r := &cobra.Command{Use: "steamcli", Short: "Private Steam toolkit: Web API, SteamCMD, ASF, and local libraries", Version: Version, SilenceUsage: true, SilenceErrors: true}
 	r.SetIn(in)
 	r.SetOut(out)
@@ -34,7 +34,8 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 	f := r.PersistentFlags()
 	f.StringVar(&o.configPath, "config", "", "Configuration JSON path")
 	f.StringVar(&o.profile, "profile", "", "Named configuration profile")
-	f.StringVarP(&o.format, "output", "o", "auto", "Output: auto, table, json, compact, raw, parsed, short")
+	f.StringVarP(&o.format, "output", "o", "auto", "Output: auto, table, json, compact, raw, short, csv")
+	f.BoolVar(&o.withHeader, "with-header", true, "Include header row in tabular/CSV output")
 	f.DurationVar(&o.timeout, "timeout", 30*time.Second, "Timeout per HTTP attempt (not game downloads)")
 	f.BoolVar(&o.offline, "offline", false, "Disable network and external SteamCMD execution; use cached metadata")
 	f.StringVar(&o.color, "color", "auto", "Colour output: auto, always, never")
@@ -49,10 +50,10 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 			return errors.New("--color must be auto, always, or never")
 		}
 		switch o.format {
-		case "auto", "table", "json", "compact", "raw", "parsed", "short":
+		case "auto", "table", "json", "compact", "raw", "short", "csv":
 			return nil
 		}
-		return errors.New("--output must be auto, table, json, compact, raw, parsed, or short")
+		return errors.New("--output must be auto, table, json, compact, raw, short, or csv")
 	}
 	r.AddCommand(statusCommand(o), workshopCommand(o), webCommand(o), asfCommand(o), clientCommand(o), cmdCommand(o), configCommand(o), doctorCommand(o), libraryCommand(o), idCommand(o))
 	return r
@@ -70,7 +71,7 @@ func (o *options) http() *httpx.Client { return httpx.New(o.timeout, o.offline, 
 
 // human reports whether the caller wants a rendered view rather than data.
 // "auto" is the default and means "the nicest representation available".
-func (o *options) human() bool { return o.format == "auto" || o.format == "table" }
+func (o *options) human() bool { return o.format == "auto" || o.format == "table" || o.format == "csv" }
 
 // emit renders v through a table writer when the caller wants a human view and
 // one exists, and falls back to JSON otherwise. This is what makes "auto" the
@@ -97,9 +98,9 @@ func (o *options) print(cmd *cobra.Command, v any) error {
 
 func tw(w io.Writer) *tabwriter.Writer { return tabwriter.NewWriter(w, 0, 0, 2, ' ', 0) }
 func (o *options) printBytes(cmd *cobra.Command, b []byte) error {
-	// "parsed" or "short" reduces an ASF envelope to the value behind it.
+	// "short", table/csv or auto ("human") reduces an ASF envelope to the value behind it.
 	// "short" strictly outputs only the bare value (for one bot) or values.
-	if (o.format == "parsed" || o.format == "short" || o.human()) && len(bytes.TrimSpace(b)) > 0 {
+	if (o.format == "short" || o.human()) && len(bytes.TrimSpace(b)) > 0 {
 		if lines, ok := asf.Parse(b); ok {
 			w := cmd.OutOrStdout()
 			for _, l := range lines {
@@ -116,7 +117,7 @@ func (o *options) printBytes(cmd *cobra.Command, b []byte) error {
 			return nil
 		}
 	}
-	if o.format != "raw" && o.format != "parsed" && o.format != "short" && len(bytes.TrimSpace(b)) > 0 {
+	if o.format != "raw" && o.format != "short" && len(bytes.TrimSpace(b)) > 0 {
 		var dst bytes.Buffer
 		var e error
 		if o.format == "compact" {

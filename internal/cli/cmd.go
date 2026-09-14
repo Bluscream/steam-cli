@@ -61,7 +61,7 @@ func cmdCommand(o *options) *cobra.Command {
 				kv("SteamCMD path", p),
 				kv("Status", green.Sprint("installed")),
 			)
-			t.Render()
+			o.renderTable(t)
 		})
 	}}
 	install.Flags().StringVar(&checksum, "sha256", "", "Require this SHA-256 when downloading a new bootstrap")
@@ -80,7 +80,7 @@ func cmdCommand(o *options) *cobra.Command {
 				kv("SteamCMD path", p),
 				kv("Status", green.Sprint("found")),
 			)
-			t.Render()
+			o.renderTable(t)
 		})
 	}}
 	run := &cobra.Command{Use: "run -- [STEAMCMD_ARGS...]", Short: "Pass arguments directly; omit arguments for an interactive console", Example: "  steam cmd run -- +login anonymous +app_info_print 730 +quit", Args: cobra.ArbitraryArgs, RunE: func(cmd *cobra.Command, args []string) error { return execute(cmd, args, "") }}

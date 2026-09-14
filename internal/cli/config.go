@@ -42,7 +42,7 @@ func configCommand(o *options) *cobra.Command {
 				kv("Community URL", s.CommunityURL),
 				kv("ASF URL", s.ASFURL),
 			)
-			t.Render()
+			o.renderTable(t)
 		})
 	}})
 	return root
@@ -114,9 +114,11 @@ func doctorCommand(o *options) *cobra.Command {
 				kv("SteamCMD installed", colorBool(installed)),
 				kv("SteamCMD path", p),
 			)
-			t.Render()
-			for _, n := range notes {
-				fmt.Fprintf(w, "%s %s\n", yellow.Sprint("Note:"), n)
+			o.renderTable(t)
+			if o.format != "csv" {
+				for _, n := range notes {
+					fmt.Fprintf(w, "%s %s\n", yellow.Sprint("Note:"), n)
+				}
 			}
 		})
 	}}

@@ -261,8 +261,10 @@ func renderPlayers(o *options, w io.Writer, b []byte) bool {
 			t.AppendRow(table.Row{truncate(p.Persona, 28), p.SteamID,
 				colorPersona(p), colorVisibility(p.visibility()), p.Country})
 		}
-		t.Render()
-		fmt.Fprintln(w, faint(fmt.Sprintf("%d profile(s).", len(players))))
+		o.renderTable(t)
+		if o.format != "csv" {
+			fmt.Fprintln(w, faint(fmt.Sprintf("%d profile(s).", len(players))))
+		}
 		return true
 	}
 
@@ -297,7 +299,7 @@ func renderPlayers(o *options, w io.Writer, b []byte) bool {
 		kv("Avatar", p.Avatar),
 	)
 	detailRows(t, rows...)
-	t.Render()
+	o.renderTable(t)
 	return true
 }
 
@@ -362,7 +364,7 @@ func renderServerInfo(o *options, w io.Writer, b []byte) bool {
 		kv("Unix timestamp", fmt.Sprint(res.ServerTime)),
 		kv("UTC time", time.Unix(res.ServerTime, 0).UTC().Format("2006-01-02 15:04:05 UTC")),
 	)
-	t.Render()
+	o.renderTable(t)
 	return true
 }
 
@@ -399,7 +401,7 @@ func renderResolve(o *options, w io.Writer, b []byte) bool {
 			kv("SteamID2", conv["steamid2"]),
 		)
 	}
-	t.Render()
+	o.renderTable(t)
 	return true
 }
 
@@ -438,7 +440,7 @@ func renderBans(o *options, w io.Writer, b []byte) bool {
 			kv("Days since last ban", fmt.Sprint(p.DaysSinceLastBan)),
 			kv("Economy ban", colorEconomyBan(p.EconomyBan)),
 		)
-		t.Render()
+		o.renderTable(t)
 		return true
 	}
 
@@ -460,8 +462,10 @@ func renderBans(o *options, w io.Writer, b []byte) bool {
 			colorEconomyBan(p.EconomyBan),
 		})
 	}
-	t.Render()
-	fmt.Fprintln(w, faint(fmt.Sprintf("%d player(s).", len(res.Players))))
+	o.renderTable(t)
+	if o.format != "csv" {
+		fmt.Fprintln(w, faint(fmt.Sprintf("%d player(s).", len(res.Players))))
+	}
 	return true
 }
 
@@ -512,8 +516,10 @@ func renderFriends(o *options, w io.Writer, b []byte) bool {
 		}
 		t.AppendRow(table.Row{f.SteamID, f.Relationship, since})
 	}
-	t.Render()
-	fmt.Fprintln(w, faint(fmt.Sprintf("%d friend(s).", len(friends))))
+	o.renderTable(t)
+	if o.format != "csv" {
+		fmt.Fprintln(w, faint(fmt.Sprintf("%d friend(s).", len(friends))))
+	}
 	return true
 }
 
@@ -568,8 +574,10 @@ func renderOwned(o *options, w io.Writer, b []byte) bool {
 		}
 		t.AppendRow(table.Row{g.AppID, name, formatPlaytime(g.PlaytimeForever), recent})
 	}
-	t.Render()
-	fmt.Fprintln(w, faint(fmt.Sprintf("%d owned game(s).", len(games))))
+	o.renderTable(t)
+	if o.format != "csv" {
+		fmt.Fprintln(w, faint(fmt.Sprintf("%d owned game(s).", len(games))))
+	}
 	return true
 }
 
@@ -621,8 +629,10 @@ func renderRecent(o *options, w io.Writer, b []byte) bool {
 		}
 		t.AppendRow(table.Row{g.AppID, name, formatPlaytime(g.Playtime2Weeks), formatPlaytime(g.PlaytimeForever)})
 	}
-	t.Render()
-	fmt.Fprintln(w, faint(fmt.Sprintf("%d recently played game(s).", len(games))))
+	o.renderTable(t)
+	if o.format != "csv" {
+		fmt.Fprintln(w, faint(fmt.Sprintf("%d recently played game(s).", len(games))))
+	}
 	return true
 }
 
@@ -667,8 +677,10 @@ func renderNews(o *options, w io.Writer, b []byte) bool {
 			item.FeedLabel,
 		})
 	}
-	t.Render()
-	fmt.Fprintln(w, faint(fmt.Sprintf("%d news article(s).", len(items))))
+	o.renderTable(t)
+	if o.format != "csv" {
+		fmt.Fprintln(w, faint(fmt.Sprintf("%d news article(s).", len(items))))
+	}
 	return true
 }
 
@@ -688,6 +700,6 @@ func renderPlayerCount(o *options, w io.Writer, b []byte) bool {
 	detailRows(t,
 		kv("Online players", thousands(res.Response.PlayerCount)),
 	)
-	t.Render()
+	o.renderTable(t)
 	return true
 }

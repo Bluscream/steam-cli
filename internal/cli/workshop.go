@@ -292,8 +292,10 @@ func workshopCommand(o *options) *cobra.Command {
 							t.AppendRow(table.Row{id})
 						}
 					}
-					t.Render()
-					fmt.Fprintf(w, "%s\n", faint(fmt.Sprintf("%d item(s) for AppID %d.", len(ids), appID)))
+					o.renderTable(t)
+					if o.format != "csv" {
+						fmt.Fprintf(w, "%s\n", faint(fmt.Sprintf("%d item(s) for AppID %d.", len(ids), appID)))
+					}
 				})
 			},
 		}
@@ -346,7 +348,7 @@ func workshopCommand(o *options) *cobra.Command {
 					for _, a := range apps {
 						t.AppendRow(table.Row{a.AppID, a.Total})
 					}
-					t.Render()
+					o.renderTable(t)
 				})
 			}
 			wc, err := workshopClient()
@@ -369,7 +371,7 @@ func workshopCommand(o *options) *cobra.Command {
 						t.AppendRow(table.Row{a.AppID, id, truncate(details[id].Title, 56)})
 					}
 				}
-				t.Render()
+				o.renderTable(t)
 			})
 		},
 	}
@@ -436,8 +438,10 @@ func workshopCommand(o *options) *cobra.Command {
 						t.AppendRow(table.Row{it.PublishedFileID, truncate(it.Title, 48),
 							it.Subscriptions, it.Favorites, unixDate(it.TimeUpdated)})
 					}
-					t.Render()
-					fmt.Fprintf(w, "%s\n", faint(fmt.Sprintf("%d of %d shown.", len(items), total)))
+					o.renderTable(t)
+					if o.format != "csv" {
+						fmt.Fprintf(w, "%s\n", faint(fmt.Sprintf("%d of %d shown.", len(items), total)))
+					}
 				})
 			},
 		}
@@ -654,14 +658,16 @@ func (o *options) renderBatch(results []workshop.BatchResult) func(io.Writer) {
 				t.AppendRow(table.Row{r.PublishedFileID, colorOK(false, "", r.Error)})
 			}
 		}
-		t.Render()
-		summary := fmt.Sprintf("%d succeeded, %d failed.", ok, len(results)-ok)
-		if ok == len(results) {
-			fmt.Fprintln(w, green.Sprint(summary))
-		} else if ok == 0 {
-			fmt.Fprintln(w, red.Sprint(summary))
-		} else {
-			fmt.Fprintln(w, yellow.Sprint(summary))
+		o.renderTable(t)
+		if o.format != "csv" {
+			summary := fmt.Sprintf("%d succeeded, %d failed.", ok, len(results)-ok)
+			if ok == len(results) {
+				fmt.Fprintln(w, green.Sprint(summary))
+			} else if ok == 0 {
+				fmt.Fprintln(w, red.Sprint(summary))
+			} else {
+				fmt.Fprintln(w, yellow.Sprint(summary))
+			}
 		}
 	}
 }
@@ -684,7 +690,7 @@ func (o *options) renderCollection(w io.Writer, coll workshop.CollectionDetails,
 	} else {
 		detailRows(t, kv("ID", coll.PublishedFileID), kv("Children", fmt.Sprint(len(coll.Children))))
 	}
-	t.Render()
+	o.renderTable(t)
 
 	if len(coll.Children) == 0 {
 		return
@@ -703,5 +709,5 @@ func (o *options) renderCollection(w io.Writer, coll workshop.CollectionDetails,
 			ct.AppendRow(table.Row{ch.PublishedFileID, ch.SortOrder})
 		}
 	}
-	ct.Render()
+	o.renderTable(ct)
 }

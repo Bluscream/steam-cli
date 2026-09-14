@@ -85,7 +85,7 @@ func clientCommand(o *options) *cobra.Command {
 					kv("Steam executable", p),
 					kv("Default arguments", argsStr),
 				)
-				t.Render()
+				o.renderTable(t)
 			})
 		},
 	}

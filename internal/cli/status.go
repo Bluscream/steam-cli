@@ -63,9 +63,11 @@ func statusCommand(o *options) *cobra.Command {
 }
 
 func (o *options) renderStatus(out io.Writer, report status.Report) {
-	fmt.Fprintf(out, "%s\n", faint("Steam status — "+report.Timestamp.Format("2006-01-02 15:04:05 UTC")))
+	if o.format != "csv" {
+		fmt.Fprintf(out, "%s\n", faint("Steam status — "+report.Timestamp.Format("2006-01-02 15:04:05 UTC")))
+	}
 
-	heading(out, "Core Services")
+	o.heading(out, "Core Services")
 	t := o.newTable(out)
 	t.AppendHeader(table.Row{"Service", "State", "Latency", "HTTP"})
 	t.SetColumnConfigs([]table.ColumnConfig{{Number: 3, Align: text.AlignRight}})
@@ -77,10 +79,10 @@ func (o *options) renderStatus(out io.Writer, report status.Report) {
 		t.AppendRow(table.Row{ep.Name, colorStatus(ep.Status),
 			fmt.Sprintf("%d ms", ep.LatencyMS), ep.HTTPCode})
 	}
-	t.Render()
+	o.renderTable(t)
 
 	if len(report.PlayerCounts) > 0 {
-		heading(out, "Online Players")
+		o.heading(out, "Online Players")
 		pt := o.newTable(out)
 		pt.AppendHeader(table.Row{"Title", "AppID", "Players"})
 		pt.SetColumnConfigs([]table.ColumnConfig{
@@ -93,16 +95,16 @@ func (o *options) renderStatus(out io.Writer, report status.Report) {
 			}
 			pt.AppendRow(table.Row{pc.Name, pc.AppID, pc.Count})
 		}
-		pt.Render()
+		o.renderTable(pt)
 	}
 
 	for _, c := range report.Coordinators {
-		heading(out, "Game Coordinator — %s (AppID %d)", c.Name, c.AppID)
+		o.heading(out, "Game Coordinator — %s (AppID %d)", c.Name, c.AppID)
 		ct := o.newTable(out)
 		ct.AppendHeader(table.Row{"Service", "State"})
 		if c.Error != "" {
 			ct.AppendRow(table.Row{"coordinator", red.Sprint(c.Error)})
-			ct.Render()
+			o.renderTable(ct)
 			continue
 		}
 		for _, svc := range sortedKeys(c.Services) {
@@ -111,22 +113,22 @@ func (o *options) renderStatus(out io.Writer, report status.Report) {
 		for _, k := range sortedKeys(c.Matchmaking) {
 			ct.AppendRow(table.Row{faint("mm: " + k), fmt.Sprint(c.Matchmaking[k])})
 		}
-		ct.Render()
+		o.renderTable(ct)
 
 		if len(c.Datacenters) > 0 {
-			heading(out, "Datacenters")
+			o.heading(out, "Datacenters")
 			dt := o.newTable(out)
 			dt.AppendHeader(table.Row{"Region", "Capacity", "Load"})
 			for _, name := range sortedKeys(c.Datacenters) {
 				cap, load := datacenterFields(c.Datacenters[name])
 				dt.AppendRow(table.Row{name, colorCapacity(cap), colorStatus(load)})
 			}
-			dt.Render()
+			o.renderTable(dt)
 		}
 	}
 
 	if len(report.ConnectionManagers) > 0 {
-		heading(out, "Connection Managers")
+		o.heading(out, "Connection Managers")
 		mt := o.newTable(out)
 		mt.AppendHeader(table.Row{"Server", "State", "Latency"})
 		mt.SetColumnConfigs([]table.ColumnConfig{{Number: 3, Align: text.AlignRight}})
@@ -137,11 +139,13 @@ func (o *options) renderStatus(out io.Writer, report status.Report) {
 				mt.AppendRow(table.Row{cm.Server, colorStatus(cm.Status), cm.Error})
 			}
 		}
-		mt.Render()
+		o.renderTable(mt)
 	}
 
-	for _, w := range report.Warnings {
-		fmt.Fprintf(out, "%s %s\n", yellow.Sprint("Note:"), w)
+	if o.format != "csv" {
+		for _, w := range report.Warnings {
+			fmt.Fprintf(out, "%s %s\n", yellow.Sprint("Note:"), w)
+		}
 	}
 }
 

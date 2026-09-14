@@ -106,7 +106,7 @@ func asfCommand(o *options) *cobra.Command {
 			t.AppendRow(table.Row{s.Name, colorBool(s.Connected), colorBool(s.Farming),
 				s.GamesRemaining, s.CardsRemaining, id})
 		}
-		t.Render()
+		o.renderTable(t)
 		return nil
 	}}
 	command := &cobra.Command{Use: "command COMMAND...", Short: "Execute an ASF command as IPC owner (can change account state)", Args: cobra.MinimumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -199,7 +199,7 @@ func render2FA(o *options, w io.Writer, b []byte) bool {
 			detailRows(t, kv("Bot", l.Bot))
 		}
 		detailRows(t, kv("2FA Token", green.Sprint(l.Value)))
-		t.Render()
+		o.renderTable(t)
 		return true
 	}
 
@@ -212,7 +212,7 @@ func render2FA(o *options, w io.Writer, b []byte) bool {
 		}
 		t.AppendRow(table.Row{bot, green.Sprint(l.Value)})
 	}
-	t.Render()
+	o.renderTable(t)
 	return true
 }
 
@@ -244,6 +244,6 @@ func renderASFStatus(o *options, w io.Writer, b []byte) bool {
 	if res.BotsCount > 0 {
 		detailRows(t, kv("Bots configured", fmt.Sprint(res.BotsCount)))
 	}
-	t.Render()
+	o.renderTable(t)
 	return true
 }

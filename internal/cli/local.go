@@ -37,11 +37,13 @@ func libraryCommand(o *options) *cobra.Command {
 				}
 				t.AppendRow(table.Row{a.AppID, truncate(a.Name, 44), size, a.Library})
 			}
-			t.Render()
-			fmt.Fprintf(w, "%s\n", faint(fmt.Sprintf("%d app(s) across %d librar%s.",
-				len(v.Apps), len(v.Libraries), map[bool]string{true: "y", false: "ies"}[len(v.Libraries) == 1])))
-			for _, warn := range v.Warnings {
-				fmt.Fprintf(w, "%s %s\n", yellow.Sprint("Warning:"), warn)
+			o.renderTable(t)
+			if o.format != "csv" {
+				fmt.Fprintf(w, "%s\n", faint(fmt.Sprintf("%d app(s) across %d librar%s.",
+					len(v.Apps), len(v.Libraries), map[bool]string{true: "y", false: "ies"}[len(v.Libraries) == 1])))
+				for _, warn := range v.Warnings {
+					fmt.Fprintf(w, "%s %s\n", yellow.Sprint("Warning:"), warn)
+				}
 			}
 		})
 	}}
@@ -97,7 +99,7 @@ func idCommand(o *options) *cobra.Command {
 				kv("Account ID", v["account_id"]),
 				kv("Profile URL", v["profile_url"]),
 			)
-			t.Render()
+			o.renderTable(t)
 		})
 	}}
 }

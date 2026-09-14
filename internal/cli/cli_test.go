@@ -434,64 +434,65 @@ func asfServer(t *testing.T, handler http.HandlerFunc) (string, func()) {
 	return s.URL, s.Close
 }
 
-func TestASFParsedExtractsToken(t *testing.T) {
+func TestASFShortExtractsToken(t *testing.T) {
 	cleanEnv(t)
 	url, done := asfServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"Result":{"gabeN":{"Result":"JKWGP","Message":"Success!","Success":true}},"Message":"OK","Success":true}`))
 	})
 	defer done()
 
-	out, err := execute(t, "--output", "parsed", "asf", "--url", url, "token", "gabeN")
+	out, err := execute(t, "--output", "short", "asf", "--url", url, "token", "gabeN")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.TrimSpace(out) != "JKWGP" {
-		t.Errorf("parsed output = %q, want just the token", out)
+		t.Errorf("short output = %q, want just the token", out)
 	}
 }
 
-func TestASFParsedMultipleBotsArePrefixed(t *testing.T) {
+func TestASFShortMultipleBotsArePrefixed(t *testing.T) {
 	cleanEnv(t)
 	url, done := asfServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"Result":{"B":{"Result":"22222"},"A":{"Result":"11111"}},"Success":true}`))
 	})
 	defer done()
 
-	out, err := execute(t, "--output", "parsed", "asf", "--url", url, "token", "--bots", "A,B")
+	out, err := execute(t, "--output", "short", "asf", "--url", url, "token", "--bots", "A,B")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out) != "A: 11111\nB: 22222" {
-		t.Errorf("parsed output = %q", out)
+	// short for multiple bots returns bare values
+	if !strings.Contains(out, "11111") || !strings.Contains(out, "22222") {
+		t.Errorf("short output = %q", out)
 	}
 }
 
-func TestASFParsedFallsBackToMessage(t *testing.T) {
+func TestASFShortFallsBackToMessage(t *testing.T) {
 	cleanEnv(t)
 	url, done := asfServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"Result":{"erikjohnson":{"Result":null,"Message":"Bot is not connected.","Success":false}},"Success":false}`))
 	})
 	defer done()
 
-	out, err := execute(t, "--output", "parsed", "asf", "--url", url, "token", "erikjohnson")
+	out, err := execute(t, "--output", "short", "asf", "--url", url, "token", "erikjohnson")
 	// Success=false must still exit nonzero while showing the reason.
 	if err == nil {
 		t.Error("a failed ASF operation should exit nonzero")
 	}
 	if !strings.Contains(out, "Bot is not connected.") {
-		t.Errorf("parsed output should explain the failure, got %q", out)
+		t.Errorf("short output should explain the failure, got %q", out)
 	}
 }
 
-// parsed applies to ASF envelopes; anything else still prints as JSON.
-func TestParsedFallsThroughForNonASFPayloads(t *testing.T) {
+// short applies to ASF envelopes; anything else still prints as JSON.
+func TestShortFallsThroughForNonASFPayloads(t *testing.T) {
 	cleanEnv(t)
 	url, done := asfServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"steamid":"7656119800000001"}`))
 	})
 	defer done()
 
-	out, err := execute(t, "--output", "parsed", "web", "--url", url, "call", "ITest", "Read", "--method", "GET")
+	out, err := execute(t, "--output", "short", "web", "--url", url, "call", "ITest", "Read", "--method", "GET")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -539,8 +540,10 @@ func TestOutputFormatValidation(t *testing.T) {
 	if _, err := execute(t, "--output", "nonsense", "id", "76561197960287930"); err == nil {
 		t.Fatal("expected an invalid --output to be rejected")
 	}
-	if _, err := execute(t, "--output", "parsed", "id", "76561197960287930"); err != nil {
-		t.Fatalf("parsed must be accepted: %v", err)
+	for _, fmt := range []string{"auto", "table", "json", "compact", "raw", "short", "csv"} {
+		if _, err := execute(t, "--output", fmt, "--offline", "id", "76561197960287930"); err != nil {
+			t.Fatalf("%s must be accepted: %v", fmt, err)
+		}
 	}
 }
 
@@ -640,7 +643,7 @@ func TestASFTokenAliases(t *testing.T) {
 	const want = "/Api/Bot/A/TwoFactorAuthentication/Token"
 	for _, name := range []string{"token", "2fa", "auth"} {
 		paths = nil
-		out, err := execute(t, "--output", "parsed", "asf", "--url", url, name, "A")
+		out, err := execute(t, "--output", "short", "asf", "--url", url, name, "A")
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -985,4 +988,48 @@ func TestWebServerInfoAndResolveRendering(t *testing.T) {
 		t.Errorf("resolve missing fields:\n%s", out)
 	}
 }
+
+func TestCSVOutputWithAndWithoutHeader(t *testing.T) {
+	cleanEnv(t)
+	body := `{"response":{"players":[
+	  {"steamid":"1","personaname":"Beta","personastate":0,"communityvisibilitystate":1,"loccountrycode":"US"},
+	  {"steamid":"2","personaname":"Alpha","personastate":1,"communityvisibilitystate":3,"loccountrycode":"DE"}]}}`
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(body))
+	}))
+	defer s.Close()
+
+	// Default CSV output includes headers
+	outWithHeader, err := execute(t, "-o", "csv", "web", "--url", s.URL, "profile", "1,2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	linesWithHeader := strings.Split(strings.TrimSpace(outWithHeader), "\n")
+	if len(linesWithHeader) < 3 {
+		t.Fatalf("expected at least 3 lines (1 header + 2 rows), got:\n%s", outWithHeader)
+	}
+	if !strings.Contains(linesWithHeader[0], "Persona") || !strings.Contains(linesWithHeader[0], "SteamID64") {
+		t.Errorf("expected header in first row of CSV output, got: %q", linesWithHeader[0])
+	}
+	if !strings.Contains(linesWithHeader[1], "Alpha") || !strings.Contains(linesWithHeader[2], "Beta") {
+		t.Errorf("expected data rows in CSV output, got:\n%s", outWithHeader)
+	}
+
+	// Suppressing headers with --with-header=false
+	outNoHeader, err := execute(t, "-o", "csv", "--with-header=false", "web", "--url", s.URL, "profile", "1,2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	linesNoHeader := strings.Split(strings.TrimSpace(outNoHeader), "\n")
+	if len(linesNoHeader) != 2 {
+		t.Fatalf("expected exactly 2 rows without header, got %d:\n%s", len(linesNoHeader), outNoHeader)
+	}
+	if strings.Contains(linesNoHeader[0], "PERSONA") {
+		t.Errorf("header should be suppressed with --with-header=false: %q", linesNoHeader[0])
+	}
+	if !strings.Contains(linesNoHeader[0], "Alpha") {
+		t.Errorf("first row should be Alpha without header, got: %q", linesNoHeader[0])
+	}
+}
+
 

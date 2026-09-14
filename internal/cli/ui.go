@@ -37,7 +37,11 @@ func (o *options) applyColor(out io.Writer) {
 
 // newTable returns a table bound to w, styled consistently across commands.
 func (o *options) newTable(w io.Writer) table.Writer {
-	o.applyColor(w)
+	if o.format == "csv" {
+		text.DisableColors()
+	} else {
+		o.applyColor(w)
+	}
 	t := table.NewWriter()
 	t.SetOutputMirror(w)
 
@@ -58,6 +62,19 @@ func (o *options) newDetail(w io.Writer) table.Writer {
 		{Number: 1, Colors: text.Colors{text.FgCyan}},
 	})
 	return t
+}
+
+// renderTable renders the table to w according to the requested output format.
+// If output format is "csv", RenderCSV is used; otherwise Render is used.
+// If withHeader is false, header rows are omitted.
+func (o *options) renderTable(t table.Writer) string {
+	if !o.withHeader {
+		t.ResetHeaders()
+	}
+	if o.format == "csv" {
+		return t.RenderCSV()
+	}
+	return t.Render()
 }
 
 // detailRows appends only the pairs that have a value, so a detail view does
@@ -124,7 +141,11 @@ func thousandsT(v any) string {
 }
 
 // heading prints a section title above a table. go-pretty's own SetTitle wraps
-// to the table's width, which breaks longer titles mid-word.
-func heading(w io.Writer, format string, args ...any) {
+// to the table's width, which breaks longer titles mid-word. In CSV mode,
+// headings are suppressed to keep machine parsers clean.
+func (o *options) heading(w io.Writer, format string, args ...any) {
+	if o.format == "csv" {
+		return
+	}
 	fmt.Fprintf(w, "\n%s\n", text.Colors{text.Bold}.Sprintf(format, args...))
 }
