@@ -3,10 +3,12 @@ package cli
 import (
 	"context"
 	"errors"
-	"github.com/spf13/cobra"
+	"io"
 	"path/filepath"
-	"steamcli.local/steam/internal/steamcmd"
 	"time"
+
+	"github.com/spf13/cobra"
+	"steamcli.local/steam/internal/steamcmd"
 )
 
 func cmdCommand(o *options) *cobra.Command {
@@ -53,7 +55,14 @@ func cmdCommand(o *options) *cobra.Command {
 		if e != nil {
 			return e
 		}
-		return o.print(cmd, map[string]string{"path": p})
+		return o.emit(cmd, map[string]string{"path": p}, func(w io.Writer) {
+			t := o.newDetail(w)
+			detailRows(t,
+				kv("SteamCMD path", p),
+				kv("Status", green.Sprint("installed")),
+			)
+			t.Render()
+		})
 	}}
 	install.Flags().StringVar(&checksum, "sha256", "", "Require this SHA-256 when downloading a new bootstrap")
 	locate := &cobra.Command{Use: "path", Short: "Locate SteamCMD without downloading or executing it", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
@@ -65,7 +74,14 @@ func cmdCommand(o *options) *cobra.Command {
 		if e != nil {
 			return e
 		}
-		return o.print(cmd, map[string]string{"path": p})
+		return o.emit(cmd, map[string]string{"path": p}, func(w io.Writer) {
+			t := o.newDetail(w)
+			detailRows(t,
+				kv("SteamCMD path", p),
+				kv("Status", green.Sprint("found")),
+			)
+			t.Render()
+		})
 	}}
 	run := &cobra.Command{Use: "run -- [STEAMCMD_ARGS...]", Short: "Pass arguments directly; omit arguments for an interactive console", Example: "  steam cmd run -- +login anonymous +app_info_print 730 +quit", Args: cobra.ArbitraryArgs, RunE: func(cmd *cobra.Command, args []string) error { return execute(cmd, args, "") }}
 	update := &cobra.Command{Use: "update", Short: "Start SteamCMD, allow its self-update, then quit", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error { return execute(cmd, []string{"+quit"}, "") }}

@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"steamcli.local/steam/internal/steamclient"
@@ -73,7 +75,18 @@ func clientCommand(o *options) *cobra.Command {
 			if l.DefaultArgs == nil {
 				out["default_args"] = []string{}
 			}
-			return o.print(cmd, out)
+			return o.emit(cmd, out, func(w io.Writer) {
+				t := o.newDetail(w)
+				argsStr := "(none)"
+				if len(l.DefaultArgs) > 0 {
+					argsStr = strings.Join(l.DefaultArgs, " ")
+				}
+				detailRows(t,
+					kv("Steam executable", p),
+					kv("Default arguments", argsStr),
+				)
+				t.Render()
+			})
 		},
 	}
 
