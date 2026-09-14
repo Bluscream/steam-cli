@@ -9,7 +9,15 @@
       "community_url": "https://steamcommunity.com",
       "access_token_env": "STEAM_ACCESS_TOKEN",
       "community_login_secure_env": "STEAM_LOGIN_SECURE",
-      "steam_client_path": ""
+      "steam_client_path": "",
+      "steam_client_args": [
+        "-console"
+      ],
+      "steamcmd_path": "",
+      "web_key_file": "",
+      "access_token_file": "",
+      "community_login_secure_file": "",
+      "asf_password_file": ""
     },
     "partner": {
       "web_url": "https://partner.steam-api.com",
@@ -22,7 +30,8 @@
       "asf_password_env": "ASF_IPC_PASSWORD",
       "allow_http": true,
       "web_url": "https://api.steampowered.com",
-      "web_key_env": "STEAM_WEB_API_KEY"
+      "web_key_env": "STEAM_WEB_API_KEY",
+      "asf_password_file": ""
     }
   }
 }

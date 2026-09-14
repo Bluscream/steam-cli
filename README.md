@@ -69,7 +69,23 @@ Use your shell's secret handling or password manager to populate credentials. A 
 
 `config init` refuses to overwrite a file and creates it with Unix mode 0600. `config show` never loads credential contents. Configuration is under the OS user configuration directory (`steam-cli/config.json`). On Linux, persistent data uses `$XDG_DATA_HOME/steam-cli` or `~/.local/share/steam-cli`; caches use `$XDG_CACHE_HOME/steam-cli` or `~/.cache/steam-cli`. macOS/Windows use Go's OS-native configuration/cache locations. `doctor` reports the actual paths. On Windows, file privacy follows the containing directory's ACLs.
 
-See [config.example.json](config.example.json) for default and partner profiles. Profiles select API hosts, credential environment/file references, and an optional `steamcmd_path`; the data directory is shared unless overridden.
+Every key a profile accepts:
+
+| Key | Purpose |
+| --- | --- |
+| `web_url` | Steam Web API base URL (use `https://partner.steam-api.com` for the partner API) |
+| `web_key_env` / `web_key_file` | Where to read the Web API key |
+| `access_token_env` / `access_token_file` | Where to read a Web API access token |
+| `community_url` | Steam Community base URL |
+| `community_login_secure_env` / `community_login_secure_file` | Where to read the `steamLoginSecure` session cookie |
+| `asf_url` | ArchiSteamFarm IPC base URL, including any reverse-proxy prefix |
+| `asf_password_env` / `asf_password_file` | Where to read the ASF IPC password |
+| `allow_http` | Permit plaintext HTTP outside loopback for this profile's hosts |
+| `steamcmd_path` | Existing SteamCMD executable or compatibility wrapper |
+| `steam_client_path` | Desktop Steam client launcher |
+| `steam_client_args` | Arguments prepended to every `steamcli client` launch |
+
+Only `*_env` / `*_file` keys appear here; credential values never do. See [config.example.json](config.example.json) for default, LAN and partner profiles. Profiles select API hosts, credential environment/file references, and an optional `steamcmd_path`; the data directory is shared unless overridden.
 
 ## Steam Web API
 
@@ -84,6 +100,7 @@ See [config.example.json](config.example.json) for default and partner profiles.
 ./bin/steamcli web friends 76561197960287930
 ./bin/steamcli web bans 76561197960287930
 ./bin/steamcli web resolve example-vanity-name
+./bin/steamcli web server-info
 ./bin/steamcli web achievements 76561197960287930 730
 ./bin/steamcli web news 730
 ./bin/steamcli web players 730
@@ -127,10 +144,15 @@ A 3xx or 4xx answer is reported as `normal`, because it still proves the host is
 ./bin/steamcli workshop subs 4000
 ./bin/steamcli workshop favorites 4000
 ./bin/steamcli workshop sub 4000 --from-collection 3052582377
+./bin/steamcli workshop unsub 4000 --all
+./bin/steamcli workshop edit-collection 4000 COLLECTION_ID --title "New title"
+./bin/steamcli workshop remove-items 4000 COLLECTION_ID ITEMID...
 ./bin/steamcli workshop create-collection 4000 --title "My Picks" --from-favorites
 ./bin/steamcli workshop add-items 4000 COLLECTION_ID ITEMID...
 ./bin/steamcli workshop delete-collection 4000 COLLECTION_ID --yes
 ```
+
+Every `workshop` subcommand is also reachable as `steamcli web workshop ...`, so the whole Web API surface stays under one command tree.
 
 Searches page with Steam's cursor rather than the `page` parameter, which is capped server-side; `--all` walks every page.
 
@@ -160,6 +182,8 @@ Commands that need the session say so and name the variable rather than reportin
 ./bin/steamcli client run 730
 ./bin/steamcli client install 220
 ./bin/steamcli client validate 730
+./bin/steamcli client uninstall 220
+./bin/steamcli client store 730
 ./bin/steamcli client open steam://open/console
 ./bin/steamcli client launch -- -silent
 ./bin/steamcli client shutdown
