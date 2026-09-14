@@ -40,6 +40,56 @@ func Defaults() []string {
 		return []string{filepath.Join(h, ".steam", "steam"), filepath.Join(h, ".local", "share", "Steam"), filepath.Join(h, ".var", "app", "com.valvesoftware.Steam", ".local", "share", "Steam")}
 	}
 }
+
+// LoggedInUser inspects loginusers.vdf across the provided Steam roots (or Defaults() if empty)
+// and returns the SteamID64 of the most recently active or autologin user.
+func LoggedInUser(roots []string) (string, error) {
+	if len(roots) == 0 {
+		roots = Defaults()
+	}
+	type candidate struct {
+		steamID   string
+		autoLogin bool
+		timestamp int64
+	}
+	var best *candidate
+	for _, root := range roots {
+		path := filepath.Join(root, "config", "loginusers.vdf")
+		m, err := parse(path)
+		if err != nil {
+			continue
+		}
+		users, ok := m["users"].(map[string]interface{})
+		if !ok {
+			users, _ = m["Users"].(map[string]interface{})
+		}
+		for id, u := range users {
+			data, ok := u.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			auto := str(data["AutoLogin"]) == "1" || str(data["MostRecent"]) == "1"
+			var ts int64
+			if tStr := str(data["Timestamp"]); tStr != "" {
+				ts, _ = strconv.ParseInt(tStr, 10, 64)
+			}
+			c := &candidate{steamID: id, autoLogin: auto, timestamp: ts}
+			if best == nil {
+				best = c
+				continue
+			}
+			if c.autoLogin && !best.autoLogin {
+				best = c
+			} else if c.autoLogin == best.autoLogin && c.timestamp > best.timestamp {
+				best = c
+			}
+		}
+	}
+	if best != nil && best.steamID != "" {
+		return best.steamID, nil
+	}
+	return "", errors.New("no logged-in Steam user found in loginusers.vdf")
+}
 func parse(path string) (map[string]interface{}, error) {
 	f, e := os.Open(path)
 	if e != nil {

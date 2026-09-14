@@ -14,6 +14,8 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
+	"steamcli.local/steam/internal/community"
+	"steamcli.local/steam/internal/library"
 	"steamcli.local/steam/internal/webapi"
 )
 
@@ -117,39 +119,130 @@ func webCommand(o *options) *cobra.Command {
 	call.Flags().StringArrayVarP(&values, "param", "p", nil, "Parameter NAME=VALUE; repeat for arrays, e.g. appids[0]=730")
 	call.Flags().StringVar(&input, "input-json", "", "Service input_json: JSON, @file, or - for stdin")
 	root.AddCommand(methods, call)
+	defaultSteamID := func() (string, error) {
+		s, err := o.settings()
+		if err == nil {
+			if id, err := s.SteamUserID(); err == nil && id != "" {
+				return id, nil
+			}
+			if cLogin, err := s.CommunityLoginSecure(); err == nil && cLogin != "" {
+				client := &community.Client{LoginSecure: cLogin}
+				if id, err := client.SteamID(); err == nil && id != "" {
+					return id, nil
+				}
+			}
+		}
+		if id, err := library.LoggedInUser(nil); err == nil && id != "" {
+			return id, nil
+		}
+		return "", errors.New("no SteamID specified, and unable to detect logged-in user (set STEAM_USER_ID, STEAM_LOGIN_SECURE, or log in to Steam desktop)")
+	}
+
 	type helper struct {
 		name, short, iface, method string
 		aliases                    []string
-		version, n                 int
-		build                      func([]string) url.Values
+		version                    int
+		args                       cobra.PositionalArgs
+		build                      func([]string) (url.Values, error)
 		// render prints a human view of the response. It reports false when
 		// the payload is not the shape it expects, so the raw JSON is printed
 		// instead of a misleading table.
 		render func(*options, io.Writer, []byte) bool
 	}
 	helpers := []helper{
-		{"server-info", "Steam server time and version", "ISteamWebAPIUtil", "GetServerInfo", nil, 1, 0, func([]string) url.Values { return nil }, renderServerInfo},
-		{"player STEAMID[,STEAMID...]", "Player summaries (SteamID64)", "ISteamUser", "GetPlayerSummaries",
-			[]string{"profile", "profiles"}, 2, 1,
-			func(a []string) url.Values { return url.Values{"steamids": {a[0]}} }, renderPlayers},
-		{"resolve VANITY", "Resolve a vanity profile name to SteamID64", "ISteamUser", "ResolveVanityURL", nil, 1, 1, func(a []string) url.Values { return url.Values{"vanityurl": {a[0]}} }, renderResolve},
-		{"owned STEAMID", "Owned games visible to your API key", "IPlayerService", "GetOwnedGames", nil, 1, 1, func(a []string) url.Values {
-			return url.Values{"steamid": {a[0]}, "include_appinfo": {"1"}, "include_played_free_games": {"1"}}
+		{"server-info", "Steam server time and version", "ISteamWebAPIUtil", "GetServerInfo", nil, 1, cobra.NoArgs, func([]string) (url.Values, error) { return nil, nil }, renderServerInfo},
+		{"player [STEAMID[,STEAMID...]]", "Player summaries (defaults to logged-in user)", "ISteamUser", "GetPlayerSummaries",
+			[]string{"profile", "profiles"}, 2, cobra.MaximumNArgs(1),
+			func(a []string) (url.Values, error) {
+				id := ""
+				if len(a) > 0 && a[0] != "" {
+					id = a[0]
+				} else {
+					var err error
+					id, err = defaultSteamID()
+					if err != nil {
+						return nil, err
+					}
+				}
+				return url.Values{"steamids": {id}}, nil
+			}, renderPlayers},
+		{"resolve VANITY", "Resolve a vanity profile name to SteamID64", "ISteamUser", "ResolveVanityURL", nil, 1, cobra.ExactArgs(1), func(a []string) (url.Values, error) { return url.Values{"vanityurl": {a[0]}}, nil }, renderResolve},
+		{"owned [STEAMID]", "Owned games visible to your API key (defaults to logged-in user)", "IPlayerService", "GetOwnedGames", nil, 1, cobra.MaximumNArgs(1), func(a []string) (url.Values, error) {
+			id := ""
+			if len(a) > 0 && a[0] != "" {
+				id = a[0]
+			} else {
+				var err error
+				id, err = defaultSteamID()
+				if err != nil {
+					return nil, err
+				}
+			}
+			return url.Values{"steamid": {id}, "include_appinfo": {"1"}, "include_played_free_games": {"1"}}, nil
 		}, renderOwned},
-		{"recent STEAMID", "Recently played games", "IPlayerService", "GetRecentlyPlayedGames", nil, 1, 1, func(a []string) url.Values { return url.Values{"steamid": {a[0]}} }, renderRecent},
-		{"friends STEAMID", "Visible friend list", "ISteamUser", "GetFriendList", nil, 1, 1, func(a []string) url.Values { return url.Values{"steamid": {a[0]}, "relationship": {"friend"}} }, renderFriends},
-		{"bans STEAMID[,STEAMID...]", "Public player ban information", "ISteamUser", "GetPlayerBans", nil, 1, 1, func(a []string) url.Values { return url.Values{"steamids": {a[0]}} }, renderBans},
-		{"achievements STEAMID APPID", "Player achievements for a game", "ISteamUserStats", "GetPlayerAchievements", nil, 1, 2, func(a []string) url.Values { return url.Values{"steamid": {a[0]}, "appid": {a[1]}} }, nil},
-		{"news APPID", "Recent game news", "ISteamNews", "GetNewsForApp", nil, 2, 1, func(a []string) url.Values { return url.Values{"appid": {a[0]}, "count": {strconv.Itoa(10)}} }, renderNews},
-		{"players APPID", "Current player count", "ISteamUserStats", "GetNumberOfCurrentPlayers", nil, 1, 1, func(a []string) url.Values { return url.Values{"appid": {a[0]}} }, renderPlayerCount},
+		{"recent [STEAMID]", "Recently played games (defaults to logged-in user)", "IPlayerService", "GetRecentlyPlayedGames", nil, 1, cobra.MaximumNArgs(1), func(a []string) (url.Values, error) {
+			id := ""
+			if len(a) > 0 && a[0] != "" {
+				id = a[0]
+			} else {
+				var err error
+				id, err = defaultSteamID()
+				if err != nil {
+					return nil, err
+				}
+			}
+			return url.Values{"steamid": {id}}, nil
+		}, renderRecent},
+		{"friends [STEAMID]", "Visible friend list (defaults to logged-in user)", "ISteamUser", "GetFriendList", nil, 1, cobra.MaximumNArgs(1), func(a []string) (url.Values, error) {
+			id := ""
+			if len(a) > 0 && a[0] != "" {
+				id = a[0]
+			} else {
+				var err error
+				id, err = defaultSteamID()
+				if err != nil {
+					return nil, err
+				}
+			}
+			return url.Values{"steamid": {id}, "relationship": {"friend"}}, nil
+		}, renderFriends},
+		{"bans [STEAMID[,STEAMID...]]", "Public player ban information (defaults to logged-in user)", "ISteamUser", "GetPlayerBans", nil, 1, cobra.MaximumNArgs(1), func(a []string) (url.Values, error) {
+			id := ""
+			if len(a) > 0 && a[0] != "" {
+				id = a[0]
+			} else {
+				var err error
+				id, err = defaultSteamID()
+				if err != nil {
+					return nil, err
+				}
+			}
+			return url.Values{"steamids": {id}}, nil
+		}, renderBans},
+		{"achievements [STEAMID] APPID", "Player achievements for a game (defaults to logged-in user if 1 arg)", "ISteamUserStats", "GetPlayerAchievements", nil, 1, cobra.RangeArgs(1, 2), func(a []string) (url.Values, error) {
+			if len(a) == 1 {
+				id, err := defaultSteamID()
+				if err != nil {
+					return nil, err
+				}
+				return url.Values{"steamid": {id}, "appid": {a[0]}}, nil
+			}
+			return url.Values{"steamid": {a[0]}, "appid": {a[1]}}, nil
+		}, nil},
+		{"news APPID", "Recent game news", "ISteamNews", "GetNewsForApp", nil, 2, cobra.ExactArgs(1), func(a []string) (url.Values, error) { return url.Values{"appid": {a[0]}, "count": {strconv.Itoa(10)}}, nil }, renderNews},
+		{"players APPID", "Current player count", "ISteamUserStats", "GetNumberOfCurrentPlayers", nil, 1, cobra.ExactArgs(1), func(a []string) (url.Values, error) { return url.Values{"appid": {a[0]}}, nil }, renderPlayerCount},
 	}
 	for _, h := range helpers {
-		root.AddCommand(&cobra.Command{Use: h.name, Aliases: h.aliases, Short: h.short, Args: cobra.ExactArgs(h.n), RunE: func(cmd *cobra.Command, args []string) error {
+		root.AddCommand(&cobra.Command{Use: h.name, Aliases: h.aliases, Short: h.short, Args: h.args, RunE: func(cmd *cobra.Command, args []string) error {
 			c, e := client()
 			if e != nil {
 				return e
 			}
-			b, e := c.Call(cmd.Context(), h.iface, h.method, h.version, "GET", h.build(args))
+			params, e := h.build(args)
+			if e != nil {
+				return e
+			}
+			b, e := c.Call(cmd.Context(), h.iface, h.method, h.version, "GET", params)
 			if e != nil {
 				return e
 			}

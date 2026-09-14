@@ -22,6 +22,8 @@ type Profile struct {
 	CommunityURL             string `json:"community_url,omitempty"`
 	CommunityLoginSecureEnv  string `json:"community_login_secure_env,omitempty"`
 	CommunityLoginSecureFile string `json:"community_login_secure_file,omitempty"`
+	SteamUserIDEnv           string `json:"steam_user_id_env,omitempty"`
+	SteamUserIDFile          string `json:"steam_user_id_file,omitempty"`
 	ASFURL                   string `json:"asf_url,omitempty"`
 	ASFPasswordEnv           string `json:"asf_password_env,omitempty"`
 	ASFPasswordFile          string `json:"asf_password_file,omitempty"`
@@ -112,6 +114,9 @@ func Load(path, name string) (Settings, error) {
 	if p.CommunityLoginSecureEnv == "" {
 		p.CommunityLoginSecureEnv = "STEAM_LOGIN_SECURE"
 	}
+	if p.SteamUserIDEnv == "" {
+		p.SteamUserIDEnv = "STEAM_USER_ID"
+	}
 	if p.WebKeyEnv == "" {
 		p.WebKeyEnv = "STEAM_API_KEY"
 	}
@@ -191,7 +196,7 @@ func Init(path string) error {
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
-	return enc.Encode(File{DefaultProfile: "default", Profiles: map[string]Profile{"default": {WebURL: "https://api.steampowered.com", CommunityURL: "https://steamcommunity.com", ASFURL: "http://127.0.0.1:1242", WebKeyEnv: "STEAM_API_KEY", AccessTokenEnv: "STEAM_ACCESS_TOKEN", CommunityLoginSecureEnv: "STEAM_LOGIN_SECURE", ASFPasswordEnv: "ASF_IPC_PASSWORD"}}})
+	return enc.Encode(File{DefaultProfile: "default", Profiles: map[string]Profile{"default": {WebURL: "https://api.steampowered.com", CommunityURL: "https://steamcommunity.com", ASFURL: "http://127.0.0.1:1242", WebKeyEnv: "STEAM_API_KEY", AccessTokenEnv: "STEAM_ACCESS_TOKEN", CommunityLoginSecureEnv: "STEAM_LOGIN_SECURE", SteamUserIDEnv: "STEAM_USER_ID", ASFPasswordEnv: "ASF_IPC_PASSWORD"}}})
 }
 
 func (s Settings) AccessToken() (string, error) {
@@ -202,4 +207,9 @@ func (s Settings) AccessToken() (string, error) {
 // Community endpoints that the Web API does not expose.
 func (s Settings) CommunityLoginSecure() (string, error) {
 	return Secret(s.CommunityLoginSecureEnv, s.CommunityLoginSecureFile)
+}
+
+// SteamUserID resolves an explicit SteamID / Steam user ID from environment or secret file.
+func (s Settings) SteamUserID() (string, error) {
+	return Secret(s.SteamUserIDEnv, s.SteamUserIDFile, "STEAM_STEAMID", "STEAMID64", "STEAMID")
 }

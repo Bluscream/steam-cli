@@ -1032,4 +1032,69 @@ func TestCSVOutputWithAndWithoutHeader(t *testing.T) {
 	}
 }
 
+func TestWebProfileDefaultsToLoggedInUser(t *testing.T) {
+	cleanEnv(t)
+	t.Setenv("STEAM_USER_ID", "76561198022446661")
+
+	var gotSteamIDs string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSteamIDs = r.URL.Query().Get("steamids")
+		w.Write([]byte(`{"response":{"players":[{"steamid":"76561198022446661","personaname":"blu"}]}}`))
+	}))
+	defer s.Close()
+
+	out, err := execute(t, "web", "--url", s.URL, "profile")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotSteamIDs != "76561198022446661" {
+		t.Errorf("expected steamids=76561198022446661, got %q", gotSteamIDs)
+	}
+	if !strings.Contains(out, "blu") {
+		t.Errorf("expected profile output to contain 'blu', got: %s", out)
+	}
+}
+
+func TestWebOwnedDefaultsToCommunitySession(t *testing.T) {
+	cleanEnv(t)
+	// SteamID derived from steamLoginSecure cookie
+	t.Setenv("STEAM_LOGIN_SECURE", "76561198022446661%7C%7Ctoken")
+
+	var gotSteamID string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSteamID = r.URL.Query().Get("steamid")
+		w.Write([]byte(`{"response":{"game_count":1,"games":[{"appid":730,"name":"CS2"}]}}`))
+	}))
+	defer s.Close()
+
+	_, err := execute(t, "web", "--url", s.URL, "owned")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotSteamID != "76561198022446661" {
+		t.Errorf("expected steamid=76561198022446661, got %q", gotSteamID)
+	}
+}
+
+func TestWebAchievementsDefaultsToUserWhenOneArg(t *testing.T) {
+	cleanEnv(t)
+	t.Setenv("STEAM_USER_ID", "76561198022446661")
+
+	var gotSteamID, gotAppID string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSteamID = r.URL.Query().Get("steamid")
+		gotAppID = r.URL.Query().Get("appid")
+		w.Write([]byte(`{"playerstats":{"achievements":[]}}`))
+	}))
+	defer s.Close()
+
+	_, err := execute(t, "web", "--url", s.URL, "achievements", "730")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotSteamID != "76561198022446661" || gotAppID != "730" {
+		t.Errorf("expected steamid=76561198022446661 appid=730, got steamid=%q appid=%q", gotSteamID, gotAppID)
+	}
+}
+
 
