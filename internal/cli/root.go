@@ -55,7 +55,7 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 		}
 		return errors.New("--output must be auto, table, json, compact, raw, short, or csv")
 	}
-	r.AddCommand(statusCommand(o), workshopCommand(o), webCommand(o), asfCommand(o), clientCommand(o), cmdCommand(o), configCommand(o), doctorCommand(o), libraryCommand(o), idCommand(o))
+	r.AddCommand(statusCommand(o), workshopCommand(o), webCommand(o), asfCommand(o), clientCommand(o), cmdCommand(o), configCommand(o), doctorCommand(o), libraryCommand(o), idCommand(o), appsCommand(o))
 	return r
 }
 func (o *options) settings() (config.Settings, error) {

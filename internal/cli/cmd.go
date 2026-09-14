@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -94,7 +95,11 @@ func cmdCommand(o *options) *cobra.Command {
 			use, short, n = "workshop APPID ITEMID", "Download a workshop item", 2
 		}
 		c := &cobra.Command{Use: use, Short: short, Args: cobra.ExactArgs(n), RunE: func(cmd *cobra.Command, args []string) error {
-			d.AppID = args[0]
+			appID, err := o.resolveAppID(cmd.Context(), args[0], cmd.ErrOrStderr())
+			if err != nil {
+				return err
+			}
+			d.AppID = strconv.Itoa(appID)
 			if workshop {
 				d.ItemID = args[1]
 			}

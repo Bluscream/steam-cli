@@ -1096,4 +1096,42 @@ func TestWebAchievementsDefaultsToUserWhenOneArg(t *testing.T) {
 	}
 }
 
+func TestAppsCommand(t *testing.T) {
+	cleanEnv(t)
+	// Execute apps command for a known query
+	out, err := execute(t, "apps", "vrchat")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(out), "vrchat") || !strings.Contains(out, "438100") {
+		t.Errorf("expected apps output to contain 'VRChat' and AppID 438100, got:\n%s", out)
+	}
+}
+
+func TestWebNewsResolvesAppName(t *testing.T) {
+	cleanEnv(t)
+	var gotAppID string
+	webServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAppID = r.URL.Query().Get("appid")
+		w.Write([]byte(`{"appnews":{"appid":438100,"newsitems":[{"gid":"1","title":"Update","author":"Dev","feedlabel":"Community","date":1700000000}]}}`))
+	}))
+	defer webServer.Close()
+
+	var outBuf, errBuf bytes.Buffer
+	c := New(strings.NewReader(""), &outBuf, &errBuf)
+	c.SetArgs([]string{"web", "--url", webServer.URL, "news", "vrchat"})
+	if err := c.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotAppID != "438100" {
+		t.Errorf("expected appid=438100, got %q", gotAppID)
+	}
+	if !strings.Contains(errBuf.String(), "Resolved \"vrchat\" to VRChat (AppID 438100)") {
+		t.Errorf("expected resolution notice in stderr, got:\n%s", errBuf.String())
+	}
+	if !strings.Contains(outBuf.String(), "Update") {
+		t.Errorf("expected news output to contain news title, got:\n%s", outBuf.String())
+	}
+}
+
 

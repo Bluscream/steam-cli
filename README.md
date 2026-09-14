@@ -113,12 +113,18 @@ Only `*_env` / `*_file` keys appear here; credential values never do. See [confi
 ./bin/steamcli --offline web methods IPlayerService
 ./bin/steamcli web methods --refresh
 
-./bin/steamcli web player 76561197960287930      # aliases: profile, profiles
+./bin/steamcli apps vrchat                           # search store apps by name
+./bin/steamcli web news vrchat                       # resolves app name to AppID
+./bin/steamcli web players cs2                       # resolves app name to AppID
+./bin/steamcli web achievements vrchat               # defaults to logged-in user, resolves app name
+
+./bin/steamcli web player 76561197960287930          # aliases: profile, profiles
+./bin/steamcli web profile                           # defaults to logged-in user
 ./bin/steamcli web profile 76561197960287930,76561197960287931
-./bin/steamcli web owned 76561197960287930
-./bin/steamcli web recent 76561197960287930
-./bin/steamcli web friends 76561197960287930
-./bin/steamcli web bans 76561197960287930
+./bin/steamcli web owned                             # defaults to logged-in user
+./bin/steamcli web recent                            # defaults to logged-in user
+./bin/steamcli web friends                           # defaults to logged-in user
+./bin/steamcli web bans                              # defaults to logged-in user
 ./bin/steamcli web resolve example-vanity-name
 ./bin/steamcli web server-info
 ./bin/steamcli web achievements 76561197960287930 730

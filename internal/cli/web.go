@@ -143,17 +143,17 @@ func webCommand(o *options) *cobra.Command {
 		aliases                    []string
 		version                    int
 		args                       cobra.PositionalArgs
-		build                      func([]string) (url.Values, error)
+		build                      func(*cobra.Command, []string) (url.Values, error)
 		// render prints a human view of the response. It reports false when
 		// the payload is not the shape it expects, so the raw JSON is printed
 		// instead of a misleading table.
 		render func(*options, io.Writer, []byte) bool
 	}
 	helpers := []helper{
-		{"server-info", "Steam server time and version", "ISteamWebAPIUtil", "GetServerInfo", nil, 1, cobra.NoArgs, func([]string) (url.Values, error) { return nil, nil }, renderServerInfo},
+		{"server-info", "Steam server time and version", "ISteamWebAPIUtil", "GetServerInfo", nil, 1, cobra.NoArgs, func(*cobra.Command, []string) (url.Values, error) { return nil, nil }, renderServerInfo},
 		{"player [STEAMID[,STEAMID...]]", "Player summaries (defaults to logged-in user)", "ISteamUser", "GetPlayerSummaries",
 			[]string{"profile", "profiles"}, 2, cobra.MaximumNArgs(1),
-			func(a []string) (url.Values, error) {
+			func(cmd *cobra.Command, a []string) (url.Values, error) {
 				id := ""
 				if len(a) > 0 && a[0] != "" {
 					id = a[0]
@@ -166,8 +166,8 @@ func webCommand(o *options) *cobra.Command {
 				}
 				return url.Values{"steamids": {id}}, nil
 			}, renderPlayers},
-		{"resolve VANITY", "Resolve a vanity profile name to SteamID64", "ISteamUser", "ResolveVanityURL", nil, 1, cobra.ExactArgs(1), func(a []string) (url.Values, error) { return url.Values{"vanityurl": {a[0]}}, nil }, renderResolve},
-		{"owned [STEAMID]", "Owned games visible to your API key (defaults to logged-in user)", "IPlayerService", "GetOwnedGames", nil, 1, cobra.MaximumNArgs(1), func(a []string) (url.Values, error) {
+		{"resolve VANITY", "Resolve a vanity profile name to SteamID64", "ISteamUser", "ResolveVanityURL", nil, 1, cobra.ExactArgs(1), func(cmd *cobra.Command, a []string) (url.Values, error) { return url.Values{"vanityurl": {a[0]}}, nil }, renderResolve},
+		{"owned [STEAMID]", "Owned games visible to your API key (defaults to logged-in user)", "IPlayerService", "GetOwnedGames", nil, 1, cobra.MaximumNArgs(1), func(cmd *cobra.Command, a []string) (url.Values, error) {
 			id := ""
 			if len(a) > 0 && a[0] != "" {
 				id = a[0]
@@ -180,7 +180,7 @@ func webCommand(o *options) *cobra.Command {
 			}
 			return url.Values{"steamid": {id}, "include_appinfo": {"1"}, "include_played_free_games": {"1"}}, nil
 		}, renderOwned},
-		{"recent [STEAMID]", "Recently played games (defaults to logged-in user)", "IPlayerService", "GetRecentlyPlayedGames", nil, 1, cobra.MaximumNArgs(1), func(a []string) (url.Values, error) {
+		{"recent [STEAMID]", "Recently played games (defaults to logged-in user)", "IPlayerService", "GetRecentlyPlayedGames", nil, 1, cobra.MaximumNArgs(1), func(cmd *cobra.Command, a []string) (url.Values, error) {
 			id := ""
 			if len(a) > 0 && a[0] != "" {
 				id = a[0]
@@ -193,7 +193,7 @@ func webCommand(o *options) *cobra.Command {
 			}
 			return url.Values{"steamid": {id}}, nil
 		}, renderRecent},
-		{"friends [STEAMID]", "Visible friend list (defaults to logged-in user)", "ISteamUser", "GetFriendList", nil, 1, cobra.MaximumNArgs(1), func(a []string) (url.Values, error) {
+		{"friends [STEAMID]", "Visible friend list (defaults to logged-in user)", "ISteamUser", "GetFriendList", nil, 1, cobra.MaximumNArgs(1), func(cmd *cobra.Command, a []string) (url.Values, error) {
 			id := ""
 			if len(a) > 0 && a[0] != "" {
 				id = a[0]
@@ -206,7 +206,7 @@ func webCommand(o *options) *cobra.Command {
 			}
 			return url.Values{"steamid": {id}, "relationship": {"friend"}}, nil
 		}, renderFriends},
-		{"bans [STEAMID[,STEAMID...]]", "Public player ban information (defaults to logged-in user)", "ISteamUser", "GetPlayerBans", nil, 1, cobra.MaximumNArgs(1), func(a []string) (url.Values, error) {
+		{"bans [STEAMID[,STEAMID...]]", "Public player ban information (defaults to logged-in user)", "ISteamUser", "GetPlayerBans", nil, 1, cobra.MaximumNArgs(1), func(cmd *cobra.Command, a []string) (url.Values, error) {
 			id := ""
 			if len(a) > 0 && a[0] != "" {
 				id = a[0]
@@ -219,18 +219,39 @@ func webCommand(o *options) *cobra.Command {
 			}
 			return url.Values{"steamids": {id}}, nil
 		}, renderBans},
-		{"achievements [STEAMID] APPID", "Player achievements for a game (defaults to logged-in user if 1 arg)", "ISteamUserStats", "GetPlayerAchievements", nil, 1, cobra.RangeArgs(1, 2), func(a []string) (url.Values, error) {
+		{"achievements [STEAMID] APPID", "Player achievements for a game (defaults to logged-in user if 1 arg; accepts app name)", "ISteamUserStats", "GetPlayerAchievements", nil, 1, cobra.RangeArgs(1, 2), func(cmd *cobra.Command, a []string) (url.Values, error) {
+			rawApp := a[0]
+			steamID := ""
 			if len(a) == 1 {
-				id, err := defaultSteamID()
+				var err error
+				steamID, err = defaultSteamID()
 				if err != nil {
 					return nil, err
 				}
-				return url.Values{"steamid": {id}, "appid": {a[0]}}, nil
+			} else {
+				steamID = a[0]
+				rawApp = a[1]
 			}
-			return url.Values{"steamid": {a[0]}, "appid": {a[1]}}, nil
+			appID, err := o.resolveAppID(cmd.Context(), rawApp, cmd.ErrOrStderr())
+			if err != nil {
+				return nil, err
+			}
+			return url.Values{"steamid": {steamID}, "appid": {strconv.Itoa(appID)}}, nil
 		}, nil},
-		{"news APPID", "Recent game news", "ISteamNews", "GetNewsForApp", nil, 2, cobra.ExactArgs(1), func(a []string) (url.Values, error) { return url.Values{"appid": {a[0]}, "count": {strconv.Itoa(10)}}, nil }, renderNews},
-		{"players APPID", "Current player count", "ISteamUserStats", "GetNumberOfCurrentPlayers", nil, 1, cobra.ExactArgs(1), func(a []string) (url.Values, error) { return url.Values{"appid": {a[0]}}, nil }, renderPlayerCount},
+		{"news APPID", "Recent game news (accepts app name, e.g. vrchat)", "ISteamNews", "GetNewsForApp", nil, 2, cobra.ExactArgs(1), func(cmd *cobra.Command, a []string) (url.Values, error) {
+			appID, err := o.resolveAppID(cmd.Context(), a[0], cmd.ErrOrStderr())
+			if err != nil {
+				return nil, err
+			}
+			return url.Values{"appid": {strconv.Itoa(appID)}, "count": {strconv.Itoa(10)}}, nil
+		}, renderNews},
+		{"players APPID", "Current player count (accepts app name, e.g. cs2)", "ISteamUserStats", "GetNumberOfCurrentPlayers", nil, 1, cobra.ExactArgs(1), func(cmd *cobra.Command, a []string) (url.Values, error) {
+			appID, err := o.resolveAppID(cmd.Context(), a[0], cmd.ErrOrStderr())
+			if err != nil {
+				return nil, err
+			}
+			return url.Values{"appid": {strconv.Itoa(appID)}}, nil
+		}, renderPlayerCount},
 	}
 	for _, h := range helpers {
 		root.AddCommand(&cobra.Command{Use: h.name, Aliases: h.aliases, Short: h.short, Args: h.args, RunE: func(cmd *cobra.Command, args []string) error {
@@ -238,7 +259,7 @@ func webCommand(o *options) *cobra.Command {
 			if e != nil {
 				return e
 			}
-			params, e := h.build(args)
+			params, e := h.build(cmd, args)
 			if e != nil {
 				return e
 			}
@@ -254,7 +275,7 @@ func webCommand(o *options) *cobra.Command {
 			return o.printBytes(cmd, b)
 		}})
 	}
-	root.AddCommand(workshopCommand(o))
+	root.AddCommand(workshopCommand(o), appsCommand(o))
 	return root
 }
 

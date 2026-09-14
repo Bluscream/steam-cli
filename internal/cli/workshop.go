@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"time"
 
@@ -139,12 +138,8 @@ func workshopCommand(o *options) *cobra.Command {
 		return deduped, nil
 	}
 
-	appIDArg := func(s string) (int, error) {
-		n, err := strconv.Atoi(s)
-		if err != nil || n <= 0 {
-			return 0, errors.New("APPID must be a positive integer")
-		}
-		return n, nil
+	appIDArg := func(cmd *cobra.Command, s string) (int, error) {
+		return o.resolveAppID(cmd.Context(), s, cmd.ErrOrStderr())
 	}
 
 	// 1. Subscribe
@@ -156,7 +151,7 @@ func workshopCommand(o *options) *cobra.Command {
 		Short:   "Subscribe to workshop items, a whole collection, or your favorites",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appID, err := appIDArg(args[0])
+			appID, err := appIDArg(cmd, args[0])
 			if err != nil {
 				return err
 			}
@@ -191,7 +186,7 @@ func workshopCommand(o *options) *cobra.Command {
 		Short:   "Unsubscribe from workshop items, a whole collection, or everything for a game",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appID, err := appIDArg(args[0])
+			appID, err := appIDArg(cmd, args[0])
 			if err != nil {
 				return err
 			}
@@ -257,7 +252,7 @@ func workshopCommand(o *options) *cobra.Command {
 			Short:   short,
 			Args:    cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
-				appID, err := appIDArg(args[0])
+				appID, err := appIDArg(cmd, args[0])
 				if err != nil {
 					return err
 				}
@@ -332,7 +327,7 @@ func workshopCommand(o *options) *cobra.Command {
 			}
 			targetAppID := 0
 			if len(args) > 0 {
-				if targetAppID, err = appIDArg(args[0]); err != nil {
+				if targetAppID, err = appIDArg(cmd, args[0]); err != nil {
 					return err
 				}
 			}
@@ -390,7 +385,7 @@ func workshopCommand(o *options) *cobra.Command {
 			Short:   short,
 			Args:    cobra.RangeArgs(1, 2),
 			RunE: func(cmd *cobra.Command, args []string) error {
-				appID, err := appIDArg(args[0])
+				appID, err := appIDArg(cmd, args[0])
 				if err != nil {
 					return err
 				}
@@ -473,7 +468,7 @@ func workshopCommand(o *options) *cobra.Command {
 			"requires STEAM_LOGIN_SECURE to be set; creating an empty one does not.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appID, err := appIDArg(args[0])
+			appID, err := appIDArg(cmd, args[0])
 			if err != nil {
 				return err
 			}
@@ -524,7 +519,7 @@ func workshopCommand(o *options) *cobra.Command {
 		Short: "Edit a collection's title, description, or visibility",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appID, err := appIDArg(args[0])
+			appID, err := appIDArg(cmd, args[0])
 			if err != nil {
 				return err
 			}
@@ -552,7 +547,7 @@ func workshopCommand(o *options) *cobra.Command {
 			Long:  short + ".\n\nCollection membership is not exposed by the Steam Web API, so this requires\nan authenticated Community session (STEAM_LOGIN_SECURE).",
 			Args:  cobra.MinimumNArgs(2),
 			RunE: func(cmd *cobra.Command, args []string) error {
-				appID, err := appIDArg(args[0])
+				appID, err := appIDArg(cmd, args[0])
 				if err != nil {
 					return err
 				}
@@ -601,7 +596,7 @@ func workshopCommand(o *options) *cobra.Command {
 			"publisher-only and rejects ordinary user API keys.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appID, err := appIDArg(args[0])
+			appID, err := appIDArg(cmd, args[0])
 			if err != nil {
 				return err
 			}
