@@ -807,3 +807,107 @@ func TestOutputShorthandAndValidation(t *testing.T) {
 		t.Error("an invalid --output should be rejected")
 	}
 }
+
+// --- web profile ------------------------------------------------------------
+
+func TestWebProfileAliasesAndRendering(t *testing.T) {
+	cleanEnv(t)
+	body := `{"response":{"players":[{"steamid":"76561197960287930","personaname":"Gaben",
+	  "realname":"Gabe","profileurl":"https://steamcommunity.com/id/x/","avatarfull":"https://a/f.jpg",
+	  "personastate":1,"communityvisibilitystate":3,"profilestate":1,"timecreated":1063407589,
+	  "lastlogoff":1789000000,"loccountrycode":"US","primaryclanid":"103582791429521408"}]}}`
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(body))
+	}))
+	defer s.Close()
+
+	for _, name := range []string{"player", "profile", "profiles"} {
+		out, err := execute(t, "web", "--url", s.URL, name, "76561197960287930")
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, want := range []string{"Gaben", "76561197960287930", "[U:1:22202]", "Online", "public", "US"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s output missing %q:\n%s", name, want, out)
+			}
+		}
+		if strings.HasPrefix(strings.TrimSpace(out), "{") {
+			t.Errorf("%s should render, not print JSON:\n%s", name, out)
+		}
+	}
+
+	js, err := execute(t, "-o", "json", "web", "--url", s.URL, "profile", "76561197960287930")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(js, `"personaname"`) {
+		t.Errorf("-o json should pass the payload through:\n%s", js)
+	}
+}
+
+// "players" is a command of its own (current player count) and must not be
+// captured by an alias of "player".
+func TestWebPlayersIsNotShadowedByPlayerAliases(t *testing.T) {
+	cleanEnv(t)
+	var gotPath string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"response":{"player_count":1234,"result":1}}`))
+	}))
+	defer s.Close()
+
+	out, err := execute(t, "web", "--url", s.URL, "players", "730")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotPath, "GetNumberOfCurrentPlayers") {
+		t.Errorf("web players hit %q, want the player-count endpoint", gotPath)
+	}
+	if !strings.Contains(out, "1234") {
+		t.Errorf("player count missing:\n%s", out)
+	}
+}
+
+func TestWebProfileMultipleRendersTable(t *testing.T) {
+	cleanEnv(t)
+	body := `{"response":{"players":[
+	  {"steamid":"1","personaname":"Beta","personastate":0,"communityvisibilitystate":1},
+	  {"steamid":"2","personaname":"Alpha","personastate":1,"communityvisibilitystate":3,"gameextrainfo":"CS2","gameid":"730"}]}}`
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(body))
+	}))
+	defer s.Close()
+
+	out, err := execute(t, "web", "--url", s.URL, "profile", "1,2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "PERSONA") {
+		t.Errorf("several profiles should render as a table:\n%s", out)
+	}
+	if strings.Index(out, "Alpha") > strings.Index(out, "Beta") {
+		t.Errorf("profiles should be sorted by persona:\n%s", out)
+	}
+	if !strings.Contains(out, "In game: CS2") {
+		t.Errorf("an in-game player should show the game:\n%s", out)
+	}
+	if !strings.Contains(out, "private") {
+		t.Errorf("visibility should be named:\n%s", out)
+	}
+}
+
+func TestWebProfileUnknownSteamID(t *testing.T) {
+	cleanEnv(t)
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"response":{"players":[]}}`))
+	}))
+	defer s.Close()
+
+	out, err := execute(t, "web", "--url", s.URL, "profile", "76561197960287930")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "not exist") {
+		t.Errorf("an empty result should be explained:\n%s", out)
+	}
+}

@@ -113,7 +113,8 @@ Only `*_env` / `*_file` keys appear here; credential values never do. See [confi
 ./bin/steamcli --offline web methods IPlayerService
 ./bin/steamcli web methods --refresh
 
-./bin/steamcli web player 76561197960287930
+./bin/steamcli web player 76561197960287930      # aliases: profile, profiles
+./bin/steamcli web profile 76561197960287930,76561197960287931
 ./bin/steamcli web owned 76561197960287930
 ./bin/steamcli web recent 76561197960287930
 ./bin/steamcli web friends 76561197960287930
@@ -128,6 +129,8 @@ Only `*_env` / `*_file` keys appear here; credential values never do. See [confi
 ./bin/steamcli web call IPlayerService GetOwnedGames --input-json '{"steamid":"76561197960287930","include_appinfo":true}'
 ./bin/steamcli web call IPlayerService GetOwnedGames --input-json @request.json
 ```
+
+`web player`, aliased `profile`, renders a profile: persona, all three SteamID forms, online status or the game being played, community visibility, country, account creation, primary group and profile URL. Several IDs at once render as a table sorted by persona. `-o json` returns Valve's payload unchanged.
 
 `web call` discovers the HTTP verb and highest available version from `GetSupportedAPIList`. Catalogs are cached for 24 hours, separately for each API host/key fingerprint. `--offline web methods` uses that cache even when stale; no private player responses are cached. Some methods require a key or publisher permissions and some are not advertised at all.
 

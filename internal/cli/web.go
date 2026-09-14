@@ -3,8 +3,13 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/url"
+	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"steamcli.local/steam/internal/webapi"
@@ -112,25 +117,32 @@ func webCommand(o *options) *cobra.Command {
 	root.AddCommand(methods, call)
 	type helper struct {
 		name, short, iface, method string
+		aliases                    []string
 		version, n                 int
 		build                      func([]string) url.Values
+		// render prints a human view of the response. It reports false when
+		// the payload is not the shape it expects, so the raw JSON is printed
+		// instead of a misleading table.
+		render func(io.Writer, []byte) bool
 	}
 	helpers := []helper{
-		{"server-info", "Steam server time and version", "ISteamWebAPIUtil", "GetServerInfo", 1, 0, func([]string) url.Values { return nil }},
-		{"player STEAMID[,STEAMID...]", "Player summaries (SteamID64)", "ISteamUser", "GetPlayerSummaries", 2, 1, func(a []string) url.Values { return url.Values{"steamids": {a[0]}} }},
-		{"resolve VANITY", "Resolve a vanity profile name to SteamID64", "ISteamUser", "ResolveVanityURL", 1, 1, func(a []string) url.Values { return url.Values{"vanityurl": {a[0]}} }},
-		{"owned STEAMID", "Owned games visible to your API key", "IPlayerService", "GetOwnedGames", 1, 1, func(a []string) url.Values {
+		{"server-info", "Steam server time and version", "ISteamWebAPIUtil", "GetServerInfo", nil, 1, 0, func([]string) url.Values { return nil }, nil},
+		{"player STEAMID[,STEAMID...]", "Player summaries (SteamID64)", "ISteamUser", "GetPlayerSummaries",
+			[]string{"profile", "profiles"}, 2, 1,
+			func(a []string) url.Values { return url.Values{"steamids": {a[0]}} }, renderPlayers},
+		{"resolve VANITY", "Resolve a vanity profile name to SteamID64", "ISteamUser", "ResolveVanityURL", nil, 1, 1, func(a []string) url.Values { return url.Values{"vanityurl": {a[0]}} }, nil},
+		{"owned STEAMID", "Owned games visible to your API key", "IPlayerService", "GetOwnedGames", nil, 1, 1, func(a []string) url.Values {
 			return url.Values{"steamid": {a[0]}, "include_appinfo": {"1"}, "include_played_free_games": {"1"}}
-		}},
-		{"recent STEAMID", "Recently played games", "IPlayerService", "GetRecentlyPlayedGames", 1, 1, func(a []string) url.Values { return url.Values{"steamid": {a[0]}} }},
-		{"friends STEAMID", "Visible friend list", "ISteamUser", "GetFriendList", 1, 1, func(a []string) url.Values { return url.Values{"steamid": {a[0]}, "relationship": {"friend"}} }},
-		{"bans STEAMID[,STEAMID...]", "Public player ban information", "ISteamUser", "GetPlayerBans", 1, 1, func(a []string) url.Values { return url.Values{"steamids": {a[0]}} }},
-		{"achievements STEAMID APPID", "Player achievements for a game", "ISteamUserStats", "GetPlayerAchievements", 1, 2, func(a []string) url.Values { return url.Values{"steamid": {a[0]}, "appid": {a[1]}} }},
-		{"news APPID", "Recent game news", "ISteamNews", "GetNewsForApp", 2, 1, func(a []string) url.Values { return url.Values{"appid": {a[0]}, "count": {strconv.Itoa(10)}} }},
-		{"players APPID", "Current player count", "ISteamUserStats", "GetNumberOfCurrentPlayers", 1, 1, func(a []string) url.Values { return url.Values{"appid": {a[0]}} }},
+		}, nil},
+		{"recent STEAMID", "Recently played games", "IPlayerService", "GetRecentlyPlayedGames", nil, 1, 1, func(a []string) url.Values { return url.Values{"steamid": {a[0]}} }, nil},
+		{"friends STEAMID", "Visible friend list", "ISteamUser", "GetFriendList", nil, 1, 1, func(a []string) url.Values { return url.Values{"steamid": {a[0]}, "relationship": {"friend"}} }, nil},
+		{"bans STEAMID[,STEAMID...]", "Public player ban information", "ISteamUser", "GetPlayerBans", nil, 1, 1, func(a []string) url.Values { return url.Values{"steamids": {a[0]}} }, nil},
+		{"achievements STEAMID APPID", "Player achievements for a game", "ISteamUserStats", "GetPlayerAchievements", nil, 1, 2, func(a []string) url.Values { return url.Values{"steamid": {a[0]}, "appid": {a[1]}} }, nil},
+		{"news APPID", "Recent game news", "ISteamNews", "GetNewsForApp", nil, 2, 1, func(a []string) url.Values { return url.Values{"appid": {a[0]}, "count": {strconv.Itoa(10)}} }, nil},
+		{"players APPID", "Current player count", "ISteamUserStats", "GetNumberOfCurrentPlayers", nil, 1, 1, func(a []string) url.Values { return url.Values{"appid": {a[0]}} }, nil},
 	}
 	for _, h := range helpers {
-		root.AddCommand(&cobra.Command{Use: h.name, Short: h.short, Args: cobra.ExactArgs(h.n), RunE: func(cmd *cobra.Command, args []string) error {
+		root.AddCommand(&cobra.Command{Use: h.name, Aliases: h.aliases, Short: h.short, Args: cobra.ExactArgs(h.n), RunE: func(cmd *cobra.Command, args []string) error {
 			c, e := client()
 			if e != nil {
 				return e
@@ -139,9 +151,167 @@ func webCommand(o *options) *cobra.Command {
 			if e != nil {
 				return e
 			}
+			if h.render != nil && o.human() {
+				if h.render(cmd.OutOrStdout(), b) {
+					return nil
+				}
+			}
 			return o.printBytes(cmd, b)
 		}})
 	}
 	root.AddCommand(workshopCommand(o))
 	return root
+}
+
+// --- player summaries -------------------------------------------------------
+
+type playerSummary struct {
+	SteamID    string `json:"steamid"`
+	Persona    string `json:"personaname"`
+	RealName   string `json:"realname"`
+	ProfileURL string `json:"profileurl"`
+	Avatar     string `json:"avatarfull"`
+	// Steam omits these for profiles the key cannot see, so they stay pointers
+	// and an absent field is rendered as unknown rather than as zero.
+	State      *int   `json:"personastate"`
+	Visibility *int   `json:"communityvisibilitystate"`
+	Configured *int   `json:"profilestate"`
+	LastLogoff *int64 `json:"lastlogoff"`
+	Created    *int64 `json:"timecreated"`
+	Country    string `json:"loccountrycode"`
+	StateCode  string `json:"locstatecode"`
+	ClanID     string `json:"primaryclanid"`
+	GameID     string `json:"gameid"`
+	GameName   string `json:"gameextrainfo"`
+	GameServer string `json:"gameserverip"`
+}
+
+// personaStates are Valve's EPersonaState values.
+var personaStates = map[int]string{
+	0: "Offline", 1: "Online", 2: "Busy", 3: "Away",
+	4: "Snooze", 5: "Looking to trade", 6: "Looking to play",
+}
+
+func (p playerSummary) status() string {
+	if p.GameName != "" {
+		return "In game: " + p.GameName
+	}
+	if p.State == nil {
+		return "unknown"
+	}
+	if s, ok := personaStates[*p.State]; ok {
+		return s
+	}
+	return fmt.Sprintf("state %d", *p.State)
+}
+
+func (p playerSummary) visibility() string {
+	if p.Visibility == nil {
+		return "unknown"
+	}
+	// ECommunityVisibilityState. Valve's own documentation mentions only 1 and
+	// 3, but live profiles do return 2.
+	switch *p.Visibility {
+	case 1:
+		return "private"
+	case 2:
+		return "friends only"
+	case 3:
+		return "public"
+	}
+	return fmt.Sprintf("visibility %d", *p.Visibility)
+}
+
+func stamp(t *int64) string {
+	if t == nil || *t <= 0 {
+		return ""
+	}
+	return time.Unix(*t, 0).UTC().Format("2006-01-02 15:04 UTC")
+}
+
+// renderPlayers prints GetPlayerSummaries: one profile as a detail view, several
+// as a table. It reports false if the payload is not a player summary.
+func renderPlayers(w io.Writer, b []byte) bool {
+	var res struct {
+		Response struct {
+			Players []playerSummary `json:"players"`
+		} `json:"response"`
+	}
+	if json.Unmarshal(b, &res) != nil {
+		return false
+	}
+	players := res.Response.Players
+	if len(players) == 0 {
+		// A valid request for a profile nobody can see returns an empty list.
+		if strings.Contains(string(b), `"players"`) {
+			fmt.Fprintln(w, "No profile returned. The SteamID may not exist, or the profile is not visible to this key.")
+			return true
+		}
+		return false
+	}
+
+	sort.Slice(players, func(i, j int) bool { return players[i].Persona < players[j].Persona })
+
+	if len(players) > 1 {
+		t := tw(w)
+		fmt.Fprintln(t, "PERSONA\tSTEAMID64\tSTATUS\tVISIBILITY\tCOUNTRY")
+		for _, p := range players {
+			fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\n",
+				truncate(p.Persona, 28), p.SteamID, p.status(), p.visibility(), p.Country)
+		}
+		t.Flush()
+		fmt.Fprintf(w, "\n%d profile(s).\n", len(players))
+		return true
+	}
+
+	p := players[0]
+	t := tw(w)
+	row := func(k, v string) {
+		if v != "" {
+			fmt.Fprintf(t, "%s\t%s\n", k, v)
+		}
+	}
+	row("Persona", p.Persona)
+	row("Real name", p.RealName)
+	row("SteamID64", p.SteamID)
+	if ids, err := convertID(p.SteamID); err == nil {
+		row("SteamID3", ids["steamid3"])
+		row("SteamID2", ids["steamid2"])
+	}
+	row("Status", p.status())
+	if p.GameName != "" {
+		row("Game", p.GameName+gameSuffix(p))
+		row("Game server", p.GameServer)
+	}
+	row("Visibility", p.visibility())
+	if p.Configured != nil && *p.Configured == 0 {
+		row("Profile", "not set up")
+	}
+	row("Country", locality(p))
+	row("Created", stamp(p.Created))
+	if p.GameName == "" {
+		row("Last seen", stamp(p.LastLogoff))
+	}
+	row("Primary group", p.ClanID)
+	row("Profile URL", p.ProfileURL)
+	row("Avatar", p.Avatar)
+	t.Flush()
+	return true
+}
+
+func gameSuffix(p playerSummary) string {
+	if p.GameID == "" {
+		return ""
+	}
+	return " (AppID " + p.GameID + ")"
+}
+
+func locality(p playerSummary) string {
+	if p.Country == "" {
+		return ""
+	}
+	if p.StateCode != "" {
+		return p.Country + "-" + p.StateCode
+	}
+	return p.Country
 }
