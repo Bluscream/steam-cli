@@ -94,3 +94,10 @@ New coverage includes: EResult interpretation from both the `x-eresult` header a
 - No subscribe, unsubscribe, publish, edit, or delete was executed against the user's real account. Request construction, EResult handling, and per-item reporting are covered by tests.
 - `IPublishedFileService/Delete` being publisher-only is taken from the bundled xPaw catalog annotation and was not confirmed by attempting a live delete.
 - Player counts and coordinator data reflect Valve's public endpoints at the time of the run.
+
+## Addendum, 2026-09-14: binary rename, `client`, `--bots`, `--output parsed`
+
+- Executable renamed `steam` to `steamcli`, matching Valve's `steamcmd` and removing the collision with the desktop client's own `steam`. `cmd/steam` moved to `cmd/steamcli`; build scripts, CI and docs updated; stale `dist/steam-*` artifacts removed and `SHA256SUMS` regenerated.
+- `steamcli client` forwards to the desktop client. Discovery verified live: resolves `/usr/bin/steam` on this machine. The self-reference guard was verified live by pointing `STEAM_CLIENT_PATH` at this CLI, which is refused.
+- **No game was launched and no `steam://` URL was handed to the running desktop client during validation**, since that has a visible effect on the user's session. Argument forwarding, exit-code propagation and URL construction are covered against a stand-in launcher script.
+- `asf --bots` and `--output parsed` verified live against the user's ArchiSteamFarm 6.3.10.1: token extraction for one and several bots, the default `ASF` selector, a scalar command result, and a `Success:false` response printing its reason while exiting nonzero.

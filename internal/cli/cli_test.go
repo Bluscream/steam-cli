@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -525,5 +527,89 @@ func TestOutputFormatValidation(t *testing.T) {
 	}
 	if _, err := execute(t, "--output", "parsed", "id", "76561197960287930"); err != nil {
 		t.Fatalf("parsed must be accepted: %v", err)
+	}
+}
+
+// --- client ---
+
+func TestClientForwardsToLauncher(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stand-in is POSIX-only")
+	}
+	cleanEnv(t)
+	dir := t.TempDir()
+	log := filepath.Join(dir, "args.txt")
+	fake := filepath.Join(dir, "fakesteam")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+log+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STEAM_CLIENT_PATH", fake)
+
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"client", "run", "730"}, "steam://run/730"},
+		{[]string{"client", "install", "220"}, "steam://install/220"},
+		{[]string{"client", "validate", "730"}, "steam://validate/730"},
+		{[]string{"client", "open", "steam://open/console"}, "steam://open/console"},
+		{[]string{"client", "shutdown"}, "-shutdown"},
+		{[]string{"client", "launch", "--", "-silent"}, "-silent"},
+	}
+	for _, tc := range cases {
+		if err := os.Remove(log); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		if _, err := execute(t, tc.args...); err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		b, err := os.ReadFile(log)
+		if err != nil {
+			t.Fatalf("%v: launcher was not invoked: %v", tc.args, err)
+		}
+		if strings.TrimSpace(string(b)) != tc.want {
+			t.Errorf("%v forwarded %q, want %q", tc.args, strings.TrimSpace(string(b)), tc.want)
+		}
+	}
+}
+
+func TestClientRejectsBadInput(t *testing.T) {
+	cleanEnv(t)
+	t.Setenv("STEAM_CLIENT_PATH", filepath.Join(t.TempDir(), "absent"))
+	for _, args := range [][]string{
+		{"client", "run", "not-a-number"},
+		{"client", "open", "http://example.com"},
+		{"client", "open", "file:///etc/passwd"},
+	} {
+		if _, err := execute(t, args...); err == nil {
+			t.Errorf("%v should have been rejected", args)
+		}
+	}
+}
+
+func TestClientPathReportsResolvedBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stand-in is POSIX-only")
+	}
+	cleanEnv(t)
+	fake := filepath.Join(t.TempDir(), "fakesteam")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STEAM_CLIENT_PATH", fake)
+
+	out, err := execute(t, "client", "path")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, fake) {
+		t.Errorf("client path = %q, want %q", out, fake)
+	}
+}
+
+func TestRootCommandIsNamedSteamcli(t *testing.T) {
+	c := New(strings.NewReader(""), io.Discard, io.Discard)
+	if c.Name() != "steamcli" {
+		t.Errorf("root command = %q, want steamcli", c.Name())
 	}
 }

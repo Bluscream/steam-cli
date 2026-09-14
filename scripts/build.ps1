@@ -9,14 +9,14 @@ try {
         $env:GOOS, $env:GOARCH = $Target.Split('/')
         $Extension = if ($env:GOOS -eq 'windows') { '.exe' } else { '' }
         Write-Host "Building $Target"
-        go build -mod=vendor -trimpath -ldflags "-s -w -X steamcli.local/steam/internal/cli.Version=$Version" -o "dist/steam-$($env:GOOS)-$($env:GOARCH)$Extension" ./cmd/steam
+        go build -mod=vendor -trimpath -ldflags "-s -w -X steamcli.local/steam/internal/cli.Version=$Version" -o "dist/steamcli-$($env:GOOS)-$($env:GOARCH)$Extension" ./cmd/steamcli
         if ($LASTEXITCODE -ne 0) { throw "Build failed: $Target" }
     }
 } finally {
     $env:CGO_ENABLED, $env:GOOS, $env:GOARCH = $oldCGO, $oldOS, $oldArch
 }
 Copy-Item docs/DEPENDENCY_LICENSES.txt dist/THIRD_PARTY_LICENSES.txt
-$Checksums = Get-ChildItem dist/steam-* | Sort-Object Name | ForEach-Object {
+$Checksums = Get-ChildItem dist/steamcli-* | Sort-Object Name | ForEach-Object {
     $Hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     "$Hash  $($_.Name)"
 }

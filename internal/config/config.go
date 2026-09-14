@@ -26,6 +26,7 @@ type Profile struct {
 	ASFPasswordEnv           string `json:"asf_password_env,omitempty"`
 	ASFPasswordFile          string `json:"asf_password_file,omitempty"`
 	SteamCMDPath             string `json:"steamcmd_path,omitempty"`
+	SteamClientPath          string `json:"steam_client_path,omitempty"`
 	// AllowHTTP permits plaintext HTTP outside loopback for this profile's
 	// hosts. Intended for a trusted LAN service such as an ASF instance; the
 	// --allow-http flag turns it on for a single run instead.
@@ -116,7 +117,7 @@ func Load(path, name string) (Settings, error) {
 	for _, v := range []struct {
 		env string
 		dst *string
-	}{{"STEAM_WEB_URL", &p.WebURL}, {"STEAM_COMMUNITY_URL", &p.CommunityURL}, {"STEAM_ASF_URL", &p.ASFURL}, {"STEAMCMD_PATH", &p.SteamCMDPath}, {"STEAM_CLI_DATA_DIR", &d}, {"STEAM_CLI_CACHE_DIR", &k}} {
+	}{{"STEAM_WEB_URL", &p.WebURL}, {"STEAM_COMMUNITY_URL", &p.CommunityURL}, {"STEAM_ASF_URL", &p.ASFURL}, {"STEAMCMD_PATH", &p.SteamCMDPath}, {"STEAM_CLIENT_PATH", &p.SteamClientPath}, {"STEAM_CLI_DATA_DIR", &d}, {"STEAM_CLI_CACHE_DIR", &k}} {
 		if s := os.Getenv(v.env); s != "" {
 			*v.dst = s
 		}

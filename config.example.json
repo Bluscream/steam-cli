@@ -8,7 +8,8 @@
       "asf_password_env": "ASF_IPC_PASSWORD",
       "community_url": "https://steamcommunity.com",
       "access_token_env": "STEAM_ACCESS_TOKEN",
-      "community_login_secure_env": "STEAM_LOGIN_SECURE"
+      "community_login_secure_env": "STEAM_LOGIN_SECURE",
+      "steam_client_path": ""
     },
     "partner": {
       "web_url": "https://partner.steam-api.com",

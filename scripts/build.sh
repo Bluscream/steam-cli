@@ -9,14 +9,14 @@ for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 wi
   extension=""
   if [ "$target_os" = windows ]; then extension=".exe"; fi
   echo "Building $target"
-  CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go build -mod=vendor -trimpath -ldflags "-s -w -X steamcli.local/steam/internal/cli.Version=$version" -o "dist/steam-$target_os-$target_arch$extension" ./cmd/steam
+  CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go build -mod=vendor -trimpath -ldflags "-s -w -X steamcli.local/steam/internal/cli.Version=$version" -o "dist/steamcli-$target_os-$target_arch$extension" ./cmd/steamcli
 done
 cp docs/DEPENDENCY_LICENSES.txt dist/THIRD_PARTY_LICENSES.txt
 (
   cd dist
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum steam-* > SHA256SUMS
+    sha256sum steamcli-* > SHA256SUMS
   else
-    shasum -a 256 steam-* > SHA256SUMS
+    shasum -a 256 steamcli-* > SHA256SUMS
   fi
 )

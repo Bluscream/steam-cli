@@ -26,7 +26,7 @@ type options struct {
 
 func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 	o := &options{}
-	r := &cobra.Command{Use: "steam", Short: "Private Steam toolkit: Web API, SteamCMD, ASF, and local libraries", Version: Version, SilenceUsage: true, SilenceErrors: true}
+	r := &cobra.Command{Use: "steamcli", Short: "Private Steam toolkit: Web API, SteamCMD, ASF, and local libraries", Version: Version, SilenceUsage: true, SilenceErrors: true}
 	r.SetIn(in)
 	r.SetOut(out)
 	r.SetErr(errOut)
@@ -47,7 +47,7 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 		}
 		return errors.New("--output must be json, compact, raw, or parsed")
 	}
-	r.AddCommand(statusCommand(o), workshopCommand(o), webCommand(o), asfCommand(o), cmdCommand(o), configCommand(o), doctorCommand(o), libraryCommand(o), idCommand(o))
+	r.AddCommand(statusCommand(o), workshopCommand(o), webCommand(o), asfCommand(o), clientCommand(o), cmdCommand(o), configCommand(o), doctorCommand(o), libraryCommand(o), idCommand(o))
 	return r
 }
 func (o *options) settings() (config.Settings, error) {
