@@ -2,6 +2,8 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"strings"
 
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -50,16 +52,29 @@ func asfCommand(o *options) *cobra.Command {
 		}
 		return e
 	}
-	for _, h := range []struct{ use, short, path string }{{"status", "ASF process information", "Api/ASF"}, {"schema", "OpenAPI schema from this ASF version", "swagger/ASF/swagger.json"}} {
-		root.AddCommand(&cobra.Command{Use: h.use, Short: h.short, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
-			c, e := client()
-			if e != nil {
-				return e
-			}
-			b, e := c.Call(cmd.Context(), "GET", h.path, nil, nil)
+	schema := &cobra.Command{Use: "schema", Short: "OpenAPI schema from this ASF version", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		c, e := client()
+		if e != nil {
+			return e
+		}
+		b, e := c.Call(cmd.Context(), "GET", "swagger/ASF/swagger.json", nil, nil)
+		return emit(cmd, b, e)
+	}}
+	asfStatus := &cobra.Command{Use: "status", Short: "ASF process information", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		c, e := client()
+		if e != nil {
+			return e
+		}
+		b, e := c.Call(cmd.Context(), "GET", "Api/ASF", nil, nil)
+		if e != nil || !o.human() {
 			return emit(cmd, b, e)
-		}})
-	}
+		}
+		if renderASFStatus(o, cmd.OutOrStdout(), b) {
+			return nil
+		}
+		return emit(cmd, b, e)
+	}}
+	root.AddCommand(schema, asfStatus)
 	bots := &cobra.Command{Use: "bots [SELECTOR]", Short: "Read bot information (default: ASF = all bots)", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		p, e := asf.BotPath(selector(args), "")
 		if e != nil {
@@ -164,4 +179,36 @@ func asfCommand(o *options) *cobra.Command {
 	}
 	root.AddCommand(token)
 	return root
+}
+
+func renderASFStatus(o *options, w io.Writer, b []byte) bool {
+	var env struct {
+		Result struct {
+			Version        string `json:"Version"`
+			ProcessID      int64  `json:"ProcessID"`
+			MemoryUsage    int64  `json:"MemoryUsage"`
+			StartedAt      string `json:"ProcessStartTime"`
+			BotsCount      int    `json:"BotsCount"`
+			CardsFarmer    any    `json:"CardsFarmer"`
+			BuildVariant   string `json:"BuildVariant"`
+		} `json:"Result"`
+	}
+	if json.Unmarshal(b, &env) != nil || env.Result.Version == "" {
+		return false
+	}
+	res := env.Result
+	memMB := float64(res.MemoryUsage) / 1024.0 / 1024.0
+	t := o.newDetail(w)
+	detailRows(t,
+		kv("ASF version", res.Version),
+		kv("Build variant", res.BuildVariant),
+		kv("Process ID", fmt.Sprint(res.ProcessID)),
+		kv("Memory usage", fmt.Sprintf("%.1f MiB", memMB)),
+		kv("Started at", res.StartedAt),
+	)
+	if res.BotsCount > 0 {
+		detailRows(t, kv("Bots configured", fmt.Sprint(res.BotsCount)))
+	}
+	t.Render()
+	return true
 }

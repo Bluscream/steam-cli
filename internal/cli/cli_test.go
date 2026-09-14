@@ -766,6 +766,24 @@ func TestAutoParsesASFEnvelopesOnly(t *testing.T) {
 	}
 }
 
+func TestASFStatusRendering(t *testing.T) {
+	cleanEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"Result":{"Version":"6.0.1.2","ProcessID":1234,"MemoryUsage":104857600,"ProcessStartTime":"2026-09-14T12:00:00Z","BotsCount":3,"BuildVariant":"generic"},"Success":true}`))
+	}))
+	defer server.Close()
+
+	out, err := execute(t, "asf", "--url", server.URL, "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"ASF version", "6.0.1.2", "1234", "100.0 MiB", "generic"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("asf status output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestStatusRendersByDefaultAndAsJSON(t *testing.T) {
 	cleanEnv(t)
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
