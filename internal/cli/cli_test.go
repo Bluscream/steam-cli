@@ -613,3 +613,28 @@ func TestRootCommandIsNamedSteamcli(t *testing.T) {
 		t.Errorf("root command = %q, want steamcli", c.Name())
 	}
 }
+
+func TestASFTokenAliases(t *testing.T) {
+	cleanEnv(t)
+	var paths []string
+	url, done := asfServer(t, func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Write([]byte(`{"Result":{"A":{"Result":"JKWGP"}},"Success":true}`))
+	})
+	defer done()
+
+	const want = "/Api/Bot/A/TwoFactorAuthentication/Token"
+	for _, name := range []string{"token", "2fa", "auth"} {
+		paths = nil
+		out, err := execute(t, "--output", "parsed", "asf", "--url", url, name, "A")
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(paths) != 1 || paths[0] != want {
+			t.Errorf("%s => %v, want %q", name, paths, want)
+		}
+		if strings.TrimSpace(out) != "JKWGP" {
+			t.Errorf("%s => %q", name, out)
+		}
+	}
+}

@@ -123,8 +123,8 @@ func asfCommand(o *options) *cobra.Command {
 		}
 		root.AddCommand(c)
 	}
-	token := &cobra.Command{Use: "token [SELECTOR]", Short: "Retrieve two-factor tokens (sensitive stdout)", Args: cobra.MaximumNArgs(1),
-		Example: "  steam asf token Bluscream --output parsed\n  steam asf token --bots Bluscream,Blufriend --output parsed"}
+	token := &cobra.Command{Use: "token [SELECTOR]", Aliases: []string{"2fa", "auth"}, Short: "Retrieve two-factor tokens (sensitive stdout)", Args: cobra.MaximumNArgs(1),
+		Example: "  steamcli asf token Bluscream --output parsed\n  steamcli asf 2fa --bots Bluscream,Blufriend --output parsed"}
 	token.RunE = func(cmd *cobra.Command, args []string) error {
 		p, e := asf.BotPath(selector(args), "TwoFactorAuthentication/Token")
 		if e != nil {

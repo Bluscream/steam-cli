@@ -213,7 +213,7 @@ With `STEAM_ASF_URL` and `ASF_IPC_PASSWORD` configured:
 ```sh
 ./bin/steamcli asf status
 ./bin/steamcli asf bots --bots Alpha,Beta
-./bin/steamcli asf token Bluscream --output parsed
+./bin/steamcli asf token Bluscream --output parsed   # aliases: 2fa, auth
 ./bin/steamcli asf token --bots Alpha,Beta --output parsed
 ./bin/steamcli asf pause --bots Alpha --resume-in 600
 ./bin/steamcli asf bots
