@@ -12,13 +12,40 @@ import (
 	"time"
 )
 
+// Transport errors may name the origin they failed to reach, but never the
+// query string. Go's own net/url errors quote the complete URL, which for the
+// Steam Web API carries the API key; the scheme and host do not, and a user
+// cannot diagnose an unreachable service without being told its address.
 func TestTransportDoesNotLeakKey(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	s.Close()
 	c := New(time.Second, false, false)
 	_, e := c.Do(context.Background(), "GET", s.URL, url.Values{"key": {"highly-secret"}}, nil, nil)
-	if e == nil || strings.Contains(e.Error(), "highly-secret") || strings.Contains(e.Error(), s.URL) {
-		t.Fatalf("unsafe error: %v", e)
+	if e == nil {
+		t.Fatal("expected an error from a closed server")
+	}
+	for _, leak := range []string{"highly-secret", "key=", "?"} {
+		if strings.Contains(e.Error(), leak) {
+			t.Fatalf("error leaks %q: %v", leak, e)
+		}
+	}
+	if !strings.Contains(e.Error(), s.URL) {
+		t.Errorf("error should name the unreachable origin %s: %v", s.URL, e)
+	}
+}
+
+func TestTimeoutErrorNamesOriginNotQuery(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		time.Sleep(2 * time.Second)
+	}))
+	defer s.Close()
+	_, e := New(50*time.Millisecond, false, false).Do(
+		context.Background(), "GET", s.URL, url.Values{"key": {"highly-secret"}}, nil, nil)
+	if e == nil || !strings.Contains(e.Error(), "timed out") {
+		t.Fatalf("expected a timeout, got %v", e)
+	}
+	if strings.Contains(e.Error(), "highly-secret") {
+		t.Fatalf("timeout error leaks the key: %v", e)
 	}
 }
 func TestRedirectNeverForwardsCredentials(t *testing.T) {

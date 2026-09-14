@@ -138,11 +138,14 @@ func (c *Client) DoFull(ctx context.Context, method, endpoint string, q url.Valu
 				return Response{}, ctx.Err()
 			}
 			// net/url errors contain the complete URL, including API keys.
+			// The origin alone is safe: ValidateURL rejects a base carrying
+			// credentials or a query, and it is what the user needs to see.
+			origin := u.Scheme + "://" + u.Host
 			var ne net.Error
 			if errors.As(e, &ne) && ne.Timeout() {
-				return Response{}, errors.New("HTTP request timed out")
+				return Response{}, fmt.Errorf("HTTP request to %s timed out", origin)
 			}
-			return Response{}, errors.New("HTTP transport failed (check network, TLS, and endpoint)")
+			return Response{}, fmt.Errorf("could not reach %s (check that the service is running and the address is correct)", origin)
 		}
 		if method == http.MethodGet && attempt < c.Retries && (resp.StatusCode == 429 || resp.StatusCode == 502 || resp.StatusCode == 503 || resp.StatusCode == 504) {
 			delay := time.Duration(1<<attempt) * time.Second

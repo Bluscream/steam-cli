@@ -40,6 +40,8 @@ func doctorCommand(o *options) *cobra.Command {
 		}
 		key, ke := s.WebKey()
 		password, pe := s.ASFPassword()
+		token, te := s.AccessToken()
+		cookie, ce := s.CommunityLoginSecure()
 		m := &steamcmd.Manager{DataDir: s.DataDir, Path: s.SteamCMDPath}
 		p, e := m.Find()
 		installed := e == nil
@@ -61,6 +63,21 @@ func doctorCommand(o *options) *cobra.Command {
 		if pe != nil {
 			notes = append(notes, "ASF IPC secret could not be read")
 		}
-		return o.print(cmd, map[string]any{"platform": runtime.GOOS + "/" + runtime.GOARCH, "version": Version, "go": runtime.Version(), "profile": s.ProfileName, "web_key_present": key != "", "asf_password_present": password != "", "steamcmd_installed": installed, "steamcmd_path": p, "data_dir": s.DataDir, "cache_dir": s.CacheDir, "notes": notes})
+		if te != nil {
+			notes = append(notes, "Steam access token could not be read")
+		}
+		if ce != nil {
+			notes = append(notes, "Steam Community session cookie could not be read")
+		}
+		if password == "" {
+			notes = append(notes, "no ASF IPC password is set ("+s.ASFPasswordEnv+"); 'steam asf' needs a running ArchiSteamFarm instance at "+s.ASFURL)
+		}
+		if cookie == "" {
+			notes = append(notes, "no Community session cookie is set ("+s.CommunityLoginSecureEnv+"); workshop subs, favorites, and collection membership need one")
+		}
+		return o.print(cmd, map[string]any{"platform": runtime.GOOS + "/" + runtime.GOARCH, "version": Version, "go": runtime.Version(), "profile": s.ProfileName, "web_key_present": key != "", "asf_password_present": password != "", "steamcmd_installed": installed, "steamcmd_path": p, "data_dir": s.DataDir, "cache_dir": s.CacheDir, "config_path": s.ConfigPath,
+			"web_url": s.WebURL, "community_url": s.CommunityURL, "asf_url": s.ASFURL,
+			"access_token_present": token != "", "community_session_present": cookie != "",
+			"notes": notes})
 	}}
 }
