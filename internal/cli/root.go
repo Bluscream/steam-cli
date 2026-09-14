@@ -34,7 +34,7 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 	f := r.PersistentFlags()
 	f.StringVar(&o.configPath, "config", "", "Configuration JSON path")
 	f.StringVar(&o.profile, "profile", "", "Named configuration profile")
-	f.StringVarP(&o.format, "output", "o", "auto", "Output: auto, table, json, compact, raw, parsed")
+	f.StringVarP(&o.format, "output", "o", "auto", "Output: auto, table, json, compact, raw, parsed, short")
 	f.DurationVar(&o.timeout, "timeout", 30*time.Second, "Timeout per HTTP attempt (not game downloads)")
 	f.BoolVar(&o.offline, "offline", false, "Disable network and external SteamCMD execution; use cached metadata")
 	f.StringVar(&o.color, "color", "auto", "Colour output: auto, always, never")
@@ -49,10 +49,10 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 			return errors.New("--color must be auto, always, or never")
 		}
 		switch o.format {
-		case "auto", "table", "json", "compact", "raw", "parsed":
+		case "auto", "table", "json", "compact", "raw", "parsed", "short":
 			return nil
 		}
-		return errors.New("--output must be auto, table, json, compact, raw, or parsed")
+		return errors.New("--output must be auto, table, json, compact, raw, parsed, or short")
 	}
 	r.AddCommand(statusCommand(o), workshopCommand(o), webCommand(o), asfCommand(o), clientCommand(o), cmdCommand(o), configCommand(o), doctorCommand(o), libraryCommand(o), idCommand(o))
 	return r
@@ -97,16 +97,14 @@ func (o *options) print(cmd *cobra.Command, v any) error {
 
 func tw(w io.Writer) *tabwriter.Writer { return tabwriter.NewWriter(w, 0, 0, 2, ' ', 0) }
 func (o *options) printBytes(cmd *cobra.Command, b []byte) error {
-	// "parsed" reduces an ASF envelope to the value behind it; "auto" does the
-	// same whenever the payload turns out to be one, which is what makes the
-	// friendly form the default without the caller having to ask for it. Any
-	// other payload falls through and is printed as JSON.
-	if (o.format == "parsed" || o.human()) && len(bytes.TrimSpace(b)) > 0 {
+	// "parsed" or "short" reduces an ASF envelope to the value behind it.
+	// "short" strictly outputs only the bare value (for one bot) or values.
+	if (o.format == "parsed" || o.format == "short" || o.human()) && len(bytes.TrimSpace(b)) > 0 {
 		if lines, ok := asf.Parse(b); ok {
 			w := cmd.OutOrStdout()
 			for _, l := range lines {
 				var e error
-				if l.Bot == "" || len(lines) == 1 {
+				if o.format == "short" || l.Bot == "" || len(lines) == 1 {
 					_, e = fmt.Fprintln(w, l.Value)
 				} else {
 					_, e = fmt.Fprintf(w, "%s: %s\n", l.Bot, l.Value)
@@ -118,7 +116,7 @@ func (o *options) printBytes(cmd *cobra.Command, b []byte) error {
 			return nil
 		}
 	}
-	if o.format != "raw" && o.format != "parsed" && len(bytes.TrimSpace(b)) > 0 {
+	if o.format != "raw" && o.format != "parsed" && o.format != "short" && len(bytes.TrimSpace(b)) > 0 {
 		var dst bytes.Buffer
 		var e error
 		if o.format == "compact" {

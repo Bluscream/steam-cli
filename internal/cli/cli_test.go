@@ -742,8 +742,16 @@ func TestAutoParsesASFEnvelopesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out) != "JKWGP" {
-		t.Errorf("an ASF envelope should be reduced by default, got %q", out)
+	if !strings.Contains(out, "JKWGP") || !strings.Contains(out, "2FA Token") {
+		t.Errorf("expected 2FA card in human output, got %q", out)
+	}
+
+	shortOut, err := execute(t, "--output", "short", "asf", "--url", token.URL, "token", "A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(shortOut) != "JKWGP" {
+		t.Errorf("--output short must return bare token, got %q", shortOut)
 	}
 
 	// A bot listing carries data per bot, not an outcome; it must survive whole.

@@ -164,7 +164,7 @@ func asfCommand(o *options) *cobra.Command {
 		root.AddCommand(c)
 	}
 	token := &cobra.Command{Use: "token [SELECTOR]", Aliases: []string{"2fa", "auth"}, Short: "Retrieve two-factor tokens (sensitive stdout)", Args: cobra.MaximumNArgs(1),
-		Example: "  steamcli asf token gabeN --output parsed\n  steamcli asf 2fa --bots gabeN,robinwalker --output parsed"}
+		Example: "  steamcli asf token gabeN --output short\n  steamcli asf 2fa --bots gabeN,robinwalker"}
 	token.RunE = func(cmd *cobra.Command, args []string) error {
 		p, e := asf.BotPath(selector(args), "TwoFactorAuthentication/Token")
 		if e != nil {
@@ -175,10 +175,45 @@ func asfCommand(o *options) *cobra.Command {
 			return e
 		}
 		b, e := c.Call(cmd.Context(), "GET", p, nil, nil)
+		if e != nil || !o.human() {
+			return emit(cmd, b, e)
+		}
+		if render2FA(o, cmd.OutOrStdout(), b) {
+			return nil
+		}
 		return emit(cmd, b, e)
 	}
 	root.AddCommand(token)
 	return root
+}
+
+func render2FA(o *options, w io.Writer, b []byte) bool {
+	lines, ok := asf.Parse(b)
+	if !ok || len(lines) == 0 {
+		return false
+	}
+	if len(lines) == 1 {
+		l := lines[0]
+		t := o.newDetail(w)
+		if l.Bot != "" {
+			detailRows(t, kv("Bot", l.Bot))
+		}
+		detailRows(t, kv("2FA Token", green.Sprint(l.Value)))
+		t.Render()
+		return true
+	}
+
+	t := o.newTable(w)
+	t.AppendHeader(table.Row{"Bot", "2FA Token"})
+	for _, l := range lines {
+		bot := l.Bot
+		if bot == "" {
+			bot = faint("(default)")
+		}
+		t.AppendRow(table.Row{bot, green.Sprint(l.Value)})
+	}
+	t.Render()
+	return true
 }
 
 func renderASFStatus(o *options, w io.Writer, b []byte) bool {
