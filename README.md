@@ -38,7 +38,9 @@ Detects your platform, verifies the download against the release `SHA256SUMS`, a
 | From source | see below |
 
 ## Screenshots
-![](https://cdn.discordapp.com/attachments/1065291958794322012/1549169144820408420/image.png?ex=6aa9b7b2&is=6aa86632&hm=c91a1dabe32b001d0989afd20e860589dccff5deca389637827506732421ca9e&)
+| cli |
+| --- |
+![](https://cdn.discordapp.com/attachments/1065291958794322012/1549169144820408420/image.png?ex=6aa9b7b2&is=6aa86632&hm=c91a1dabe32b001d0989afd20e860589dccff5deca389637827506732421ca9e&) |
 
 ## Build and run
 
