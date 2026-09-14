@@ -120,6 +120,28 @@ func (m *Monitor) targets() []struct{ name, url string } {
 	}
 }
 
+// CheckCoreServices probes only the 4 core HTTP endpoints without CMs, coordinators, or app player counts.
+func (m *Monitor) CheckCoreServices(ctx context.Context) ([]EndpointStatus, error) {
+	if m.HTTP == nil {
+		return nil, errors.New("status monitor requires an HTTP client")
+	}
+	if m.HTTP.Offline {
+		return nil, errors.New("cannot check Steam status in --offline mode")
+	}
+	targets := m.targets()
+	endpoints := make([]EndpointStatus, len(targets))
+	var wg sync.WaitGroup
+	for i, t := range targets {
+		wg.Add(1)
+		go func(idx int, name, target string) {
+			defer wg.Done()
+			endpoints[idx] = m.probeHTTP(ctx, name, target)
+		}(i, t.name, t.url)
+	}
+	wg.Wait()
+	return endpoints, nil
+}
+
 func (m *Monitor) apps() []TrackedApp {
 	if len(m.Apps) > 0 {
 		return m.Apps

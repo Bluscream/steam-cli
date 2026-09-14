@@ -150,14 +150,23 @@ For an undiscovered endpoint or to avoid the discovery request, specify the verb
 
 POST calls use form encoding in the body. `--param` / `-p` can be repeated and supports names such as `appids[0]`. `--input-json` accepts literal JSON, `@file`, or `-` for stdin; Steam service APIs receive it as an `input_json` form/query field. No SteamID-sized integer is converted through floating point. Arbitrary parameters are passed through; the CLI does not claim to validate every endpoint's schema or permissions.
 
-## Service status
+## Service status and Info
 
 ```sh
+./bin/steamcli info                                  # aggregated overview: server time, core services, user, client, ASF
 ./bin/steamcli --output raw status
 ./bin/steamcli status --no-cm --no-coordinator
 ./bin/steamcli --output raw status --app 730 --app 570
 ./bin/steamcli status --cm-limit 20
 ```
+
+`steamcli info` aggregates high-level responses from across the toolkit into a single summary command:
+- **Steam Server Info**: Web API server time, Unix timestamp, and UTC time
+- **Core Services**: Latency and HTTP status of Store, Community, Web API, and Help
+- **Logged-in User**: Detected profile name, SteamID (64/3/2), status, and profile link
+- **Client & Environment**: OS platform, active profile, desktop Steam client executable, SteamCMD path, library folders, and installed games count
+- **ArchiSteamFarm (ASF)**: Version, process ID, memory usage, and bot counts (if running/reachable)
+
 
 Reports what [steamstat.us](https://steamstat.us/) reports, from the same public sources: reachability and latency for the Store, Community, Web API and Help hosts; live player counts for eight major titles (`--app` replaces that list); the CS2 game coordinator's service states, matchmaking queues and per-region datacenter capacity; and TCP handshake latency against connection managers drawn from `ISteamDirectory/GetCMList`.
 

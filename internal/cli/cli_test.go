@@ -1180,4 +1180,28 @@ func TestLibraryCustomOverrides(t *testing.T) {
 	}
 }
 
+func TestInfoCommand(t *testing.T) {
+	cleanEnv(t)
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ISteamWebAPIUtil/GetServerInfo/v1/":
+			w.Write([]byte(`{"servertime":1789420000,"servertimestring":"Mon Sep 14 14:00:00 2026"}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer s.Close()
+
+	out, err := execute(t, "--config", "/dev/null", "info")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Client & Environment") {
+		t.Errorf("expected info output to contain 'Client & Environment', got:\n%s", out)
+	}
+	if !strings.Contains(out, "Platform") {
+		t.Errorf("expected info output to contain 'Platform', got:\n%s", out)
+	}
+}
+
 
