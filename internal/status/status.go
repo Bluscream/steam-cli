@@ -171,7 +171,7 @@ func (m *Monitor) Check(ctx context.Context, checkCM, checkCoordinator bool) (Re
 	if checkCoordinator {
 		if m.WebKey == "" {
 			report.Warnings = append(report.Warnings,
-				"game coordinator status skipped: no Steam Web API key configured (set STEAM_WEB_API_KEY)")
+				"game coordinator status skipped: no Steam Web API key configured (set STEAM_API_KEY)")
 		} else {
 			coords = make([]CoordinatorStatus, len(CoordinatorApps))
 			for i, a := range CoordinatorApps {

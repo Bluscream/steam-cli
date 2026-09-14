@@ -113,7 +113,7 @@ func Load(path, name string) (Settings, error) {
 		p.CommunityLoginSecureEnv = "STEAM_LOGIN_SECURE"
 	}
 	if p.WebKeyEnv == "" {
-		p.WebKeyEnv = "STEAM_WEB_API_KEY"
+		p.WebKeyEnv = "STEAM_API_KEY"
 	}
 	if p.ASFPasswordEnv == "" {
 		p.ASFPasswordEnv = "ASF_IPC_PASSWORD"
@@ -148,7 +148,7 @@ func Load(path, name string) (Settings, error) {
 func Secret(env, file string, aliases ...string) (string, error) {
 	for _, k := range append([]string{env}, aliases...) {
 		if k != "" {
-			if v, ok := os.LookupEnv(k); ok {
+			if v, ok := os.LookupEnv(k); ok && v != "" {
 				return v, nil
 			}
 		}
@@ -171,6 +171,9 @@ func Secret(env, file string, aliases ...string) (string, error) {
 	return strings.TrimRight(string(b), "\r\n"), nil
 }
 func (s Settings) WebKey() (string, error) {
+	if s.WebKeyEnv == "STEAM_API_KEY" {
+		return Secret(s.WebKeyEnv, s.WebKeyFile, "STEAM_WEB_API_KEY")
+	}
 	if s.WebKeyEnv == "STEAM_WEB_API_KEY" {
 		return Secret(s.WebKeyEnv, s.WebKeyFile, "STEAM_API_KEY")
 	}
@@ -188,7 +191,7 @@ func Init(path string) error {
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
-	return enc.Encode(File{DefaultProfile: "default", Profiles: map[string]Profile{"default": {WebURL: "https://api.steampowered.com", CommunityURL: "https://steamcommunity.com", ASFURL: "http://127.0.0.1:1242", WebKeyEnv: "STEAM_WEB_API_KEY", AccessTokenEnv: "STEAM_ACCESS_TOKEN", CommunityLoginSecureEnv: "STEAM_LOGIN_SECURE", ASFPasswordEnv: "ASF_IPC_PASSWORD"}}})
+	return enc.Encode(File{DefaultProfile: "default", Profiles: map[string]Profile{"default": {WebURL: "https://api.steampowered.com", CommunityURL: "https://steamcommunity.com", ASFURL: "http://127.0.0.1:1242", WebKeyEnv: "STEAM_API_KEY", AccessTokenEnv: "STEAM_ACCESS_TOKEN", CommunityLoginSecureEnv: "STEAM_LOGIN_SECURE", ASFPasswordEnv: "ASF_IPC_PASSWORD"}}})
 }
 
 func (s Settings) AccessToken() (string, error) {
