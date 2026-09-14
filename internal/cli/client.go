@@ -9,6 +9,8 @@ import (
 
 func clientCommand(o *options) *cobra.Command {
 	var path string
+	var extraArgs []string
+	var noDefaults bool
 
 	root := &cobra.Command{
 		Use:   "client",
@@ -18,9 +20,14 @@ func clientCommand(o *options) *cobra.Command {
 			"the overlay, and steam:// protocol handling. The client is located on PATH,\n" +
 			"then in the usual install locations; --steam-path, STEAM_CLIENT_PATH, or\n" +
 			"steam_client_path in your profile override that. A candidate that resolves\n" +
-			"to this CLI is refused, so installing it as \"steam\" cannot cause a loop.",
+			"to this CLI is refused, so installing it as \"steam\" cannot cause a loop.\n\n" +
+			"steam_client_args in your profile (or STEAM_CLIENT_ARGS) is prepended to\n" +
+			"every launch, for options you always want such as -console. --steam-arg\n" +
+			"adds to that for one run and --no-default-args skips it.",
 	}
 	root.PersistentFlags().StringVar(&path, "steam-path", "", "Steam client executable or launcher script")
+	root.PersistentFlags().StringArrayVar(&extraArgs, "steam-arg", nil, "Extra argument for the Steam client; repeat for multiple")
+	root.PersistentFlags().BoolVar(&noDefaults, "no-default-args", false, "Ignore steam_client_args from the configuration for this run")
 
 	locator := func() (steamclient.Locator, error) {
 		s, err := o.settings()
@@ -31,8 +38,14 @@ func clientCommand(o *options) *cobra.Command {
 		if path != "" {
 			p = path
 		}
+		var defaults []string
+		if !noDefaults {
+			defaults = append(defaults, s.SteamClientArgs...)
+		}
+		defaults = append(defaults, extraArgs...)
+
 		self, _ := os.Executable()
-		return steamclient.Locator{Path: p, Self: self}, nil
+		return steamclient.Locator{Path: p, Self: self, DefaultArgs: defaults}, nil
 	}
 
 	run := func(cmd *cobra.Command, args []string) error {
@@ -45,7 +58,7 @@ func clientCommand(o *options) *cobra.Command {
 
 	where := &cobra.Command{
 		Use:   "path",
-		Short: "Show which Steam client executable would be used",
+		Short: "Show which Steam client executable and default arguments would be used",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			l, err := locator()
@@ -56,7 +69,11 @@ func clientCommand(o *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return o.print(cmd, map[string]string{"path": p})
+			out := map[string]any{"path": p, "default_args": l.DefaultArgs}
+			if l.DefaultArgs == nil {
+				out["default_args"] = []string{}
+			}
+			return o.print(cmd, out)
 		},
 	}
 

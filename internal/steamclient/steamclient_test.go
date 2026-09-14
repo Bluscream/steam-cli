@@ -187,3 +187,37 @@ func TestValidateURL(t *testing.T) {
 		}
 	}
 }
+
+func TestRunPrependsDefaultArgs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stand-in is POSIX-only")
+	}
+	dir := t.TempDir()
+	fake := writeExecutable(t, dir, "fakesteam", "#!/bin/sh\nprintf '%s|' \"$@\"\n")
+
+	var out strings.Builder
+	l := Locator{Path: fake, DefaultArgs: []string{"-console", "-silent"}}
+	if err := l.Run(context.Background(), []string{"steam://run/730"}, nil, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	// Defaults come first so flags apply to the invocation that follows.
+	if out.String() != "-console|-silent|steam://run/730|" {
+		t.Errorf("argv = %q", out.String())
+	}
+}
+
+func TestRunWithoutDefaultsIsUnchanged(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stand-in is POSIX-only")
+	}
+	dir := t.TempDir()
+	fake := writeExecutable(t, dir, "fakesteam", "#!/bin/sh\nprintf '%s|' \"$@\"\n")
+
+	var out strings.Builder
+	if err := (Locator{Path: fake}).Run(context.Background(), []string{"-shutdown"}, nil, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "-shutdown|" {
+		t.Errorf("argv = %q", out.String())
+	}
+}

@@ -638,3 +638,54 @@ func TestASFTokenAliases(t *testing.T) {
 		}
 	}
 }
+
+func TestClientDefaultArgs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stand-in is POSIX-only")
+	}
+	cleanEnv(t)
+	dir := t.TempDir()
+	log := filepath.Join(dir, "args.txt")
+	fake := filepath.Join(dir, "fakesteam")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nprintf '%s|' \"$@\" > "+log+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(dir, "config.json")
+	body := `{"default_profile":"d","profiles":{"d":{"steam_client_path":"` + fake +
+		`","steam_client_args":["-console"]}}}`
+	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(args ...string) string {
+		t.Helper()
+		os.Remove(log)
+		if _, err := execute(t, append([]string{"--config", cfg}, args...)...); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		b, err := os.ReadFile(log)
+		if err != nil {
+			t.Fatalf("%v: launcher not invoked: %v", args, err)
+		}
+		return string(b)
+	}
+
+	if got := run("client", "run", "730"); got != "-console|steam://run/730|" {
+		t.Errorf("configured default not applied: %q", got)
+	}
+	if got := run("client", "launch", "--", "-bigpicture"); got != "-console|-bigpicture|" {
+		t.Errorf("launch argv = %q", got)
+	}
+	if got := run("client", "--steam-arg", "-silent", "run", "730"); got != "-console|-silent|steam://run/730|" {
+		t.Errorf("--steam-arg should add to the defaults: %q", got)
+	}
+	if got := run("client", "--no-default-args", "run", "730"); got != "steam://run/730|" {
+		t.Errorf("--no-default-args should suppress them: %q", got)
+	}
+
+	// The environment overrides the profile.
+	t.Setenv("STEAM_CLIENT_ARGS", "-silent -noverifyfiles")
+	if got := run("client", "run", "730"); got != "-silent|-noverifyfiles|steam://run/730|" {
+		t.Errorf("STEAM_CLIENT_ARGS should override the profile: %q", got)
+	}
+}

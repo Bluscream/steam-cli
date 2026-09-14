@@ -27,6 +27,10 @@ type Profile struct {
 	ASFPasswordFile          string `json:"asf_password_file,omitempty"`
 	SteamCMDPath             string `json:"steamcmd_path,omitempty"`
 	SteamClientPath          string `json:"steam_client_path,omitempty"`
+	// SteamClientArgs are prepended to every desktop-client launch made
+	// through "steamcli client", for options you always want, such as
+	// -console. STEAM_CLIENT_ARGS overrides it, split on whitespace.
+	SteamClientArgs []string `json:"steam_client_args,omitempty"`
 	// AllowHTTP permits plaintext HTTP outside loopback for this profile's
 	// hosts. Intended for a trusted LAN service such as an ASF instance; the
 	// --allow-http flag turns it on for a single run instead.
@@ -121,6 +125,9 @@ func Load(path, name string) (Settings, error) {
 		if s := os.Getenv(v.env); s != "" {
 			*v.dst = s
 		}
+	}
+	if v, ok := os.LookupEnv("STEAM_CLIENT_ARGS"); ok {
+		p.SteamClientArgs = strings.Fields(v)
 	}
 	for _, raw := range []string{p.WebURL, p.ASFURL, p.CommunityURL} {
 		u, e := url.Parse(raw)

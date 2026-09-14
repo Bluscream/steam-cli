@@ -55,6 +55,7 @@ The CLI reads existing environment variables. It does not load `.env` files auto
 | `STEAM_ASF_URL` | ASF base URL override |
 | `STEAMCMD_PATH` | Existing executable or compatibility wrapper |
 | `STEAM_CLIENT_PATH` | Desktop Steam client launcher used by `steamcli client` |
+| `STEAM_CLIENT_ARGS` | Whitespace-separated default arguments for that launcher |
 | `STEAM_CLI_DATA_DIR` | Persistent SteamCMD installation directory |
 | `STEAM_CLI_CACHE_DIR` | API discovery cache directory |
 
@@ -163,6 +164,16 @@ Commands that need the session say so and name the variable rather than reportin
 ./bin/steamcli client launch -- -silent
 ./bin/steamcli client shutdown
 ```
+
+`steam_client_args` in a profile, or `STEAM_CLIENT_ARGS`, is prepended to every launch, for options you always want:
+
+```json
+"default": { "steam_client_args": ["-console"] }
+```
+
+Defaults come first, so `steamcli client run 730` becomes `steam -console steam://run/730`. `--steam-arg` adds to them for one run, `--no-default-args` skips them, and `steamcli client path` prints both the resolved executable and the defaults in effect. The environment variable replaces the profile list rather than extending it.
+
+Prefer Steam's `-console` flag over a second `steam://` URL. `-console` adds the CONSOLE tab to the window Steam opens, whereas passing `steam://open/console` alongside another `steam://` URL leaves the client to decide which one wins.
 
 `client` forwards to Valve's own launcher, which owns login, the overlay, and `steam://` handling; this CLI only locates the executable and hands over the arguments. Discovery checks `--steam-path`, then `STEAM_CLIENT_PATH` or `steam_client_path`, then `steam` on PATH, then the usual per-platform install locations including Flatpak exports. The client's exit status is propagated.
 

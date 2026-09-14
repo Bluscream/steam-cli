@@ -29,6 +29,9 @@ type Locator struct {
 	// LookPath and Stat are injectable so discovery can be tested.
 	LookPath func(string) (string, error)
 	Stat     func(string) (os.FileInfo, error)
+	// DefaultArgs are prepended to every launch, before the caller's own
+	// arguments, so a flag such as -console applies to each invocation.
+	DefaultArgs []string
 	// Self is this process's executable. A candidate resolving to it is
 	// rejected: installing this CLI as "steam" would otherwise make the
 	// client command re-invoke the CLI forever.
@@ -129,7 +132,10 @@ func (l Locator) Run(ctx context.Context, args []string, stdin io.Reader, stdout
 	if err != nil {
 		return err
 	}
-	c := exec.CommandContext(ctx, path, args...)
+	full := make([]string, 0, len(l.DefaultArgs)+len(args))
+	full = append(full, l.DefaultArgs...)
+	full = append(full, args...)
+	c := exec.CommandContext(ctx, path, full...)
 	c.Stdin, c.Stdout, c.Stderr = stdin, stdout, stderr
 	if err := c.Run(); err != nil {
 		var x *exec.ExitError
