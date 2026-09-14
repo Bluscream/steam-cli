@@ -276,7 +276,7 @@ func (c *Client) Query(ctx context.Context, opts QueryOptions) ([]PublishedFileD
 		opts.Page = 1
 	}
 
-	var all []PublishedFileDetails
+	all := []PublishedFileDetails{}
 	total := 0
 	cursor := "*"
 	seen := make(map[string]bool)
@@ -581,7 +581,7 @@ func ScanInstalled(libraries []string, targetAppID int) ([]InstalledApp, error) 
 		}
 	}
 
-	var results []InstalledApp
+	results := []InstalledApp{}
 	for appID, itemSet := range appMap {
 		if len(itemSet) == 0 {
 			continue

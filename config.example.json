@@ -5,7 +5,10 @@
       "web_url": "https://api.steampowered.com",
       "web_key_env": "STEAM_WEB_API_KEY",
       "asf_url": "http://127.0.0.1:1242",
-      "asf_password_env": "ASF_IPC_PASSWORD"
+      "asf_password_env": "ASF_IPC_PASSWORD",
+      "community_url": "https://steamcommunity.com",
+      "access_token_env": "STEAM_ACCESS_TOKEN",
+      "community_login_secure_env": "STEAM_LOGIN_SECURE"
     },
     "partner": {
       "web_url": "https://partner.steam-api.com",

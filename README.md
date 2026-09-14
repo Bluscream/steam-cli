@@ -3,7 +3,9 @@
 A private, cross-platform Go CLI for Steam Web API, Valve SteamCMD, ArchiSteamFarm IPC, and local Steam metadata. Builds to a single executable. No telemetry, hosted middleware, browser automation, Python, Node, or .NET runtime is required by the CLI.
 
 ```text
+steam status    Steam service health, player counts, CMs, and game coordinators
 steam web       API discovery, raw calls, and common player/game queries
+steam workshop  subscriptions, favorites, search, and collection management
 steam cmd       automatic SteamCMD bootstrap, execution, app/workshop downloads
 steam asf       IPC calls, bot controls, commands, OpenAPI, two-factor tokens
 steam library   local library and installed-app inspection
@@ -44,14 +46,17 @@ The CLI reads existing environment variables. It does not load `.env` files auto
 | --- | --- |
 | `STEAM_WEB_API_KEY` | Preferred Steam Web API key |
 | `STEAM_API_KEY` | Compatibility fallback when the preferred variable is unset |
+| `STEAM_ACCESS_TOKEN` | Web API access token for methods a key cannot authorize |
+| `STEAM_LOGIN_SECURE` | Community session cookie; required for collection membership, subscriptions, and favorites |
 | `ASF_IPC_PASSWORD` | ASF authentication header |
 | `STEAM_WEB_URL` | Web API base URL override |
+| `STEAM_COMMUNITY_URL` | Community base URL override |
 | `STEAM_ASF_URL` | ASF base URL override |
 | `STEAMCMD_PATH` | Existing executable or compatibility wrapper |
 | `STEAM_CLI_DATA_DIR` | Persistent SteamCMD installation directory |
 | `STEAM_CLI_CACHE_DIR` | API discovery cache directory |
 
-Use your shell's secret handling or password manager to populate credentials. A protected file can also be referenced by `web_key_file` or `asf_password_file` in a profile. Environment values take precedence over files; an explicitly empty variable suppresses its fallback. Custom credential environment variable names are supported per profile.
+Use your shell's secret handling or password manager to populate credentials. A protected file can also be referenced by `web_key_file`, `access_token_file`, `community_login_secure_file`, or `asf_password_file` in a profile. Environment values take precedence over files; an explicitly empty variable suppresses its fallback. Custom credential environment variable names are supported per profile.
 
 ```sh
 ./bin/steam config init
@@ -95,6 +100,55 @@ For an undiscovered endpoint or to avoid the discovery request, specify the verb
 ```
 
 POST calls use form encoding in the body. `--param` / `-p` can be repeated and supports names such as `appids[0]`. `--input-json` accepts literal JSON, `@file`, or `-` for stdin; Steam service APIs receive it as an `input_json` form/query field. No SteamID-sized integer is converted through floating point. Arbitrary parameters are passed through; the CLI does not claim to validate every endpoint's schema or permissions.
+
+## Service status
+
+```sh
+./bin/steam --output raw status
+./bin/steam status --no-cm --no-coordinator
+./bin/steam --output raw status --app 730 --app 570
+./bin/steam status --cm-limit 20
+```
+
+Reports what [steamstat.us](https://steamstat.us/) reports, from the same public sources: reachability and latency for the Store, Community, Web API and Help hosts; live player counts for eight major titles (`--app` replaces that list); the CS2 game coordinator's service states, matchmaking queues and per-region datacenter capacity; and TCP handshake latency against connection managers drawn from `ISteamDirectory/GetCMList`.
+
+A 3xx or 4xx answer is reported as `normal`, because it still proves the host is serving traffic; only 5xx and transport failures are `down`. Above 1500 ms an endpoint is `slow`. Probe failures are recorded per item rather than failing the run, so one unreachable service does not hide the rest. Coordinator status needs a Web API key; without one the report carries a warning instead of silently omitting it. Only CS2 exposes this interface, so it is the only coordinator queried.
+
+## Workshop
+
+```sh
+./bin/steam workshop search 4000 "map" --count 10
+./bin/steam workshop search-collections 4000 "weapons" --all
+./bin/steam workshop collection 3052582377
+./bin/steam --offline workshop installed 107410
+./bin/steam workshop subs 4000
+./bin/steam workshop favorites 4000
+./bin/steam workshop sub 4000 --from-collection 3052582377
+./bin/steam workshop create-collection 4000 --title "My Picks" --from-favorites
+./bin/steam workshop add-items 4000 COLLECTION_ID ITEMID...
+./bin/steam workshop delete-collection 4000 COLLECTION_ID --yes
+```
+
+Searches page with Steam's cursor rather than the `page` parameter, which is capped server-side; `--all` walks every page.
+
+Batch operations report per-item outcomes as `{succeeded, failed, results}`. Steam answers HTTP 200 even when it refuses a write and reports the real outcome in `x-eresult`, so each item's result reflects that code, not the HTTP status. A batch exits nonzero only when every item failed.
+
+`installed` reads `appworkshop_<appid>.acf` manifests from local libraries and works `--offline`. It is disk state: an item subscribed but not downloaded is absent, and an item left behind after unsubscribing is present. `subs` and `favorites` report what Steam records for the account.
+
+### What requires a Community session
+
+The Steam Web API has no method that sets a collection's children, and none that lists your own subscriptions or favorites. `IPublishedFileService/Delete` is publisher-only and rejects ordinary user keys. Those operations go through steamcommunity.com using the `steamLoginSecure` cookie from a browser session, exactly as the Workshop web UI does:
+
+| Command | Needs `STEAM_LOGIN_SECURE` |
+| --- | --- |
+| `search`, `search-collections`, `collection`, `installed` | no |
+| `sub`, `unsub`, `edit-collection` | no (Web API key) |
+| `create-collection` without items | no |
+| `create-collection` with items, `add-items`, `remove-items` | yes |
+| `subs`, `favorites` | yes |
+| `delete-collection` | preferred; falls back to the publisher-only Web API method |
+
+Commands that need the session say so and name the variable rather than reporting a success that changed nothing. Subscription and favorite lists are read from the account's own Workshop listing, which Steam serves only as HTML; an item Steam declines to render will not appear.
 
 ## SteamCMD
 

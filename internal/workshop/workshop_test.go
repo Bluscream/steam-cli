@@ -576,3 +576,30 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
+// Empty results must serialize as a list, not null, so consumers can iterate.
+func TestEmptyResultsSerializeAsLists(t *testing.T) {
+	apps, err := ScanInstalled([]string{t.TempDir()}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(apps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "[]" {
+		t.Errorf("ScanInstalled with no results = %s, want []", b)
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"response":{"total":0,"publishedfiledetails":[]}}`))
+	}))
+	defer ts.Close()
+	items, _, err := (&Client{Web: newWeb(ts.URL)}).Query(context.Background(), QueryOptions{AppID: 4000, FileType: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := json.Marshal(items); string(b) != "[]" {
+		t.Errorf("empty Query = %s, want []", b)
+	}
+}

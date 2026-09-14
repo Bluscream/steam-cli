@@ -48,3 +48,49 @@ The test SteamCMD runtime and downloaded redistributable are retained under igno
 - Steam API discovery describes only what the tested key was allowed to see. Publisher-only and undocumented endpoints depend on their own authorization and current upstream behavior.
 - HTTP requests and archive inputs are bounded, but the external SteamCMD runtime is not sandboxed. Its downloads, self-updates, and account cache behavior belong to Valve.
 - SHA-256 checks apply to the downloaded bootstrap only. The wrapper does not claim an independently verified vendor signature or immutable SteamCMD self-updates.
+
+---
+
+# Validation record: workshop and status remediation
+
+Validated on **2026-09-14**, Linux amd64, after the audit of the `status` and `workshop` features.
+
+## Automated checks
+
+- `go test -mod=vendor -race -cover ./...`: passed, **72.0%** aggregate statement coverage (was 66.7%).
+- `go vet -mod=vendor ./...`: passed. `gofmt -l`: clean.
+- Per-package coverage for the packages this round touched:
+
+| Package | Before | After |
+| --- | --- | --- |
+| `internal/status` | 1.2% | 91.1% |
+| `internal/workshop` | 33.5% | 88.7% |
+| `internal/community` | new | 89.4% |
+| `internal/cli` | 44.2% | 58.3% |
+| `internal/webapi` | 56.7% | 60.7% |
+
+The previous `internal/status` suite contained a `TestFetchPlayerCount` that never called `fetchPlayerCount`; it could not, because the probes hardcoded Valve's hostnames. Probe endpoints are now injectable and the function is tested against a fixture server.
+
+New coverage includes: EResult interpretation from both the `x-eresult` header and the response body, including the silent-success case; per-item batch outcomes where one item succeeds and another is refused; collection membership add/remove against a fixture Community server; CSRF double-submit (the `sessionid` cookie and form field must agree); expired-session detection via login redirect; cursor pagination including a server that repeats a page; workshop ACF parsing against a manifest whose item blocks contain sizes, timestamps, manifest IDs and ugchandles that must not be mistaken for item IDs; and the refusal paths that report a missing Community session instead of a false success.
+
+## Live integration checks
+
+| Check | Result |
+| --- | --- |
+| `status --output raw`, full probe set | Passed; 4 endpoints, 8 player counts, CS2 coordinator with matchmaking and 30+ datacenter regions, 5 CMs |
+| Steam Help returning HTTP 302 | Classified `normal`; the host is serving traffic |
+| `workshop installed 107410` | Passed; 191 items, matching an independent block-level parse of the same manifest |
+| `workshop collection 3052582377` | Passed; title and 47 children |
+| `workshop search 4000 "car"` | Passed; 129,656 total, cursor-paged |
+| `workshop search-collections 4000 "weapons" --all` | Passed; walked ~49 cursor pages, 968 of 1,007 returned |
+| `workshop search --page 4` | Passed; returns results past the depth where page-based paging is capped |
+| Session-required commands without a cookie | Passed; each names `STEAM_LOGIN_SECURE` and exits nonzero |
+| `delete-collection` without `--yes` | Passed; refuses |
+
+## Remaining validation boundaries
+
+- **No Community session was available during validation, so no session-authenticated write was executed against Steam.** `add-items`, `remove-items`, populated `create-collection`, `subs`, `favorites`, and the session path of `delete-collection` are covered by fixture-server tests that assert the request shape — path, form fields, CSRF double-submit, cookie — and by their refusal paths. Their behavior against live steamcommunity.com is unverified. The endpoints and form fields follow what the Workshop web UI sends; Valve can change them without notice, and they are not part of any documented API.
+- The subscription and favorite listings are parsed from HTML, anchored on the `sharedfile_<id>` element ID. This is the same data the Workshop page shows, and it will break if Valve restyles that markup. An item Steam declines to render does not appear.
+- No subscribe, unsubscribe, publish, edit, or delete was executed against the user's real account. Request construction, EResult handling, and per-item reporting are covered by tests.
+- `IPublishedFileService/Delete` being publisher-only is taken from the bundled xPaw catalog annotation and was not confirmed by attempting a live delete.
+- Player counts and coordinator data reflect Valve's public endpoints at the time of the run.

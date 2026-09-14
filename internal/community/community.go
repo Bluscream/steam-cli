@@ -206,7 +206,7 @@ func (c *Client) ListWorkshopFiles(ctx context.Context, appID int, filter string
 
 	const perPage = 30
 	seen := make(map[string]bool)
-	var out []string
+	out := []string{}
 
 	for page := 1; page <= maxPages; page++ {
 		q := url.Values{
