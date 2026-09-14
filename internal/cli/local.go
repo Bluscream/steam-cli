@@ -15,6 +15,7 @@ import (
 
 func libraryCommand(o *options) *cobra.Command {
 	var roots []string
+	var customOnly bool
 	c := &cobra.Command{Use: "library", Short: "Inspect installed games and Steam library folders offline", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		r := roots
 		if len(r) == 0 {
@@ -24,30 +25,73 @@ func libraryCommand(o *options) *cobra.Command {
 		if e != nil {
 			return e
 		}
-		return o.emit(cmd, v, func(w io.Writer) {
-			t := o.newTable(w)
-			t.AppendHeader(table.Row{"AppID", "Name", "Size", "Library"})
-			t.SetColumnConfigs([]table.ColumnConfig{
-				{Number: 3, Align: text.AlignRight},
-			})
-			for _, a := range v.Apps {
-				size := ""
-				if n, err := strconv.ParseInt(a.SizeOnDisk, 10, 64); err == nil && n > 0 {
-					size = humanBytes(n)
+		apps := v.Apps
+		if customOnly {
+			var filtered []library.App
+			for _, a := range apps {
+				if a.CompatTool != "" || a.LaunchOptions != "" {
+					filtered = append(filtered, a)
 				}
-				t.AppendRow(table.Row{a.AppID, truncate(a.Name, 44), size, a.Library})
+			}
+			apps = filtered
+		}
+		return o.emit(cmd, apps, func(w io.Writer) {
+			t := o.newTable(w)
+			if customOnly {
+				t.AppendHeader(table.Row{"AppID", "Name", "Compat Tool", "Launch Options"})
+				for _, a := range apps {
+					ct := a.CompatTool
+					if ct == "" {
+						ct = "-"
+					}
+					lo := a.LaunchOptions
+					if lo == "" {
+						lo = "-"
+					}
+					t.AppendRow(table.Row{a.AppID, truncate(a.Name, 35), ct, truncate(lo, 45)})
+				}
+			} else {
+				t.AppendHeader(table.Row{"AppID", "Name", "Size", "Library"})
+				t.SetColumnConfigs([]table.ColumnConfig{
+					{Number: 3, Align: text.AlignRight},
+				})
+				for _, a := range apps {
+					size := ""
+					if n, err := strconv.ParseInt(a.SizeOnDisk, 10, 64); err == nil && n > 0 {
+						size = humanBytes(n)
+					}
+					t.AppendRow(table.Row{a.AppID, truncate(a.Name, 44), size, a.Library})
+				}
 			}
 			o.renderTable(t)
 			if o.format != "csv" {
-				fmt.Fprintf(w, "%s\n", faint(fmt.Sprintf("%d app(s) across %d librar%s.",
-					len(v.Apps), len(v.Libraries), map[bool]string{true: "y", false: "ies"}[len(v.Libraries) == 1])))
-				for _, warn := range v.Warnings {
-					fmt.Fprintf(w, "%s %s\n", yellow.Sprint("Warning:"), warn)
+				if customOnly {
+					fmt.Fprintf(w, "%s\n", faint(fmt.Sprintf("%d game(s) with custom compatibility tools or launch options.", len(apps))))
+				} else {
+					fmt.Fprintf(w, "%s\n", faint(fmt.Sprintf("%d app(s) across %d librar%s.",
+						len(apps), len(v.Libraries), map[bool]string{true: "y", false: "ies"}[len(v.Libraries) == 1])))
+					for _, warn := range v.Warnings {
+						fmt.Fprintf(w, "%s %s\n", yellow.Sprint("Warning:"), warn)
+					}
 				}
 			}
 		})
 	}}
 	c.Flags().StringArrayVar(&roots, "root", nil, "Steam root directory; repeat for multiple installations")
+	c.Flags().BoolVar(&customOnly, "custom", false, "Only list games with custom compatibility tools or launch options set")
+
+	customSub := &cobra.Command{
+		Use:     "custom",
+		Aliases: []string{"overrides", "compat", "launch-options", "args"},
+		Short:   "List installed games that have custom compatibility tools or launch options set",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			customOnly = true
+			return c.RunE(cmd, args)
+		},
+	}
+	customSub.Flags().StringArrayVar(&roots, "root", nil, "Steam root directory; repeat for multiple installations")
+	c.AddCommand(customSub)
 	return c
 }
 

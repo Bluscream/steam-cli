@@ -1148,4 +1148,36 @@ func TestGlobalSearchCommand(t *testing.T) {
 	}
 }
 
+func TestLibraryCustomOverrides(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "steamapps"), 0700)
+	os.MkdirAll(filepath.Join(root, "config"), 0700)
+	os.MkdirAll(filepath.Join(root, "userdata", "12345", "config"), 0700)
+
+	// App 730 installed
+	os.WriteFile(filepath.Join(root, "steamapps", "appmanifest_730.acf"), []byte(`"AppState" { "appid" "730" "name" "CS2" "installdir" "CS2" }`), 0600)
+	// App 550 installed
+	os.WriteFile(filepath.Join(root, "steamapps", "appmanifest_550.acf"), []byte(`"AppState" { "appid" "550" "name" "L4D2" "installdir" "L4D2" }`), 0600)
+
+	// config.vdf with compat tool for 730
+	configVDF := `"InstallConfigStore" { "Software" { "Valve" { "Steam" { "CompatToolMapping" { "730" { "name" "proton_experimental" } } } } } }`
+	os.WriteFile(filepath.Join(root, "config", "config.vdf"), []byte(configVDF), 0600)
+
+	// localconfig.vdf with launch options for 550
+	localVDF := `"UserLocalConfigStore" { "Software" { "Valve" { "Steam" { "apps" { "550" { "LaunchOptions" "-novid -console" } } } } } }`
+	os.WriteFile(filepath.Join(root, "userdata", "12345", "config", "localconfig.vdf"), []byte(localVDF), 0600)
+
+	out, err := execute(t, "library", "custom", "--root", root)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "CS2") || !strings.Contains(out, "proton_experimental") {
+		t.Errorf("expected CS2 with compat tool, got:\n%s", out)
+	}
+	if !strings.Contains(out, "L4D2") || !strings.Contains(out, "-novid -console") {
+		t.Errorf("expected L4D2 with launch options, got:\n%s", out)
+	}
+}
+
 

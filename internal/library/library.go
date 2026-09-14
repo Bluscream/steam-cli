@@ -15,13 +15,15 @@ import (
 )
 
 type App struct {
-	AppID      string `json:"appid"`
-	Name       string `json:"name"`
-	InstallDir string `json:"install_dir"`
-	Library    string `json:"library"`
-	Manifest   string `json:"manifest"`
-	StateFlags string `json:"state_flags"`
-	SizeOnDisk string `json:"size_on_disk,omitempty"`
+	AppID         string `json:"appid"`
+	Name          string `json:"name"`
+	InstallDir    string `json:"install_dir"`
+	Library       string `json:"library"`
+	Manifest      string `json:"manifest"`
+	StateFlags    string `json:"state_flags"`
+	SizeOnDisk    string `json:"size_on_disk,omitempty"`
+	CompatTool    string `json:"compat_tool,omitempty"`
+	LaunchOptions string `json:"launch_options,omitempty"`
 }
 type Report struct {
 	Libraries []string `json:"libraries"`
@@ -177,9 +179,110 @@ func Scan(roots []string) (Report, error) {
 				r.Warnings = append(r.Warnings, "invalid installation path in "+path)
 				continue
 			}
-			r.Apps = append(r.Apps, App{str(a["appid"]), str(a["name"]), filepath.Join(lib, "steamapps", "common", install), lib, path, str(a["StateFlags"]), str(a["SizeOnDisk"])})
+			app := App{
+				AppID:      str(a["appid"]),
+				Name:       str(a["name"]),
+				InstallDir: filepath.Join(lib, "steamapps", "common", install),
+				Library:    lib,
+				Manifest:   path,
+				StateFlags: str(a["StateFlags"]),
+				SizeOnDisk: str(a["SizeOnDisk"]),
+			}
+			r.Apps = append(r.Apps, app)
 		}
 	}
+
+	// Enrich apps with custom compatibility tools and launch options
+	compatTools := ScanCompatTools(roots)
+	launchOpts := ScanLaunchOptions(roots)
+	for i := range r.Apps {
+		id := r.Apps[i].AppID
+		if ct, ok := compatTools[id]; ok {
+			r.Apps[i].CompatTool = ct
+		}
+		if lo, ok := launchOpts[id]; ok {
+			r.Apps[i].LaunchOptions = lo
+		}
+	}
+
 	sort.Slice(r.Apps, func(i, j int) bool { return r.Apps[i].AppID < r.Apps[j].AppID })
 	return r, nil
+}
+
+// ScanCompatTools inspects config.vdf in the given Steam roots and returns a map of AppID to custom compatibility tool name.
+func ScanCompatTools(roots []string) map[string]string {
+	if len(roots) == 0 {
+		roots = Defaults()
+	}
+	out := make(map[string]string)
+	for _, root := range roots {
+		path := filepath.Join(root, "config", "config.vdf")
+		m, err := parse(path)
+		if err != nil {
+			continue
+		}
+		// Structure: InstallConfigStore -> Software -> Valve -> Steam -> CompatToolMapping
+		ics, ok := m["InstallConfigStore"].(map[string]interface{})
+		if !ok {
+			ics = m
+		}
+		software, _ := ics["Software"].(map[string]interface{})
+		valve, _ := software["Valve"].(map[string]interface{})
+		steam, _ := valve["Steam"].(map[string]interface{})
+		ctm, _ := steam["CompatToolMapping"].(map[string]interface{})
+		for id, val := range ctm {
+			if id == "0" {
+				continue // 0 is global default
+			}
+			if entry, ok := val.(map[string]interface{}); ok {
+				name := str(entry["name"])
+				if name != "" {
+					out[id] = name
+				}
+			}
+		}
+	}
+	return out
+}
+
+// ScanLaunchOptions inspects userdata/*/config/localconfig.vdf in the given Steam roots and returns a map of AppID to custom launch options.
+func ScanLaunchOptions(roots []string) map[string]string {
+	if len(roots) == 0 {
+		roots = Defaults()
+	}
+	out := make(map[string]string)
+	for _, root := range roots {
+		pattern := filepath.Join(root, "userdata", "*", "config", "localconfig.vdf")
+		files, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
+		for _, file := range files {
+			m, err := parse(file)
+			if err != nil {
+				continue
+			}
+			// UserLocalConfigStore -> Software -> Valve -> Steam -> apps / Apps
+			ulcs, ok := m["UserLocalConfigStore"].(map[string]interface{})
+			if !ok {
+				ulcs = m
+			}
+			software, _ := ulcs["Software"].(map[string]interface{})
+			valve, _ := software["Valve"].(map[string]interface{})
+			steam, _ := valve["Steam"].(map[string]interface{})
+			apps, ok := steam["apps"].(map[string]interface{})
+			if !ok {
+				apps, _ = steam["Apps"].(map[string]interface{})
+			}
+			for id, appData := range apps {
+				if ad, ok := appData.(map[string]interface{}); ok {
+					lo := str(ad["LaunchOptions"])
+					if lo != "" {
+						out[id] = lo
+					}
+				}
+			}
+		}
+	}
+	return out
 }
