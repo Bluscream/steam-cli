@@ -192,3 +192,36 @@ project 69.2% → 72.6%, above the 71.9% that preceded this round of work.
 
 The ASF memory conversion was checked against a live instance: 182,319 KB
 reported by ASF renders as 178.1 MiB, matching its OpenAPI schema's KB unit.
+
+### `steamcli server` (Game Servers)
+
+Added a command set mirroring the client's Game Servers dialog. Verified live:
+
+| Check | Result |
+| --- | --- |
+| `server browse "counter-strike 2" --not-empty` | Passed; name resolved to AppID 730, 5 servers, busiest first |
+| `server info <addr> --players` | Passed against a live CS2 server: map, 16/64, version, OS, ping, scoreboard |
+| `server favorites` | Passed; 19 entries read from the client's own file |
+| `server history` | Passed; 94 entries |
+| `server favorites --refresh` | Passed; 1 of 19 servers from 2018 still answering |
+| `server add` / `remove` round trip | Passed on a **copy** of the real file: 19 → 20 → 19, history untouched, all 226 entries preserved, backup written |
+| `server lan` | Ran; nothing answered on this network |
+
+**A panic in the A2S library was found and contained.** `go-a2s` indexes into
+replies without always checking length, and a truncated challenge from one of
+the stale favourites crashed the process mid-listing. Server replies are
+untrusted input from arbitrary hosts, so every entry point into the library now
+recovers and returns an error for that address instead. Found only by querying
+real servers; a fixture would not have produced it.
+
+Not exercised: `server connect` (it launches the desktop client and joins a
+game), and writes against the live file while Steam is running — the commands
+detect a running client and warn that it will overwrite the file on exit.
+
+### Provenance drift
+
+`go-pretty`, `go-runewidth`, `uniseg` and `golang.org/x/text` were vendored into
+the binary without being recorded in `docs/THIRD_PARTY.md`, the same class of
+gap as the embedded xPaw catalog. All four are now documented, the bundled
+licence file regenerated, and `internal/meta` holds a test that fails when a
+module in `go.mod` is missing from the document.

@@ -13,6 +13,7 @@ steamcli search     one query across store, workshop, your library, and players
 steamcli apps       find games by name and resolve them to AppIDs
 steamcli web        API discovery, raw calls, and common player/game queries
 steamcli workshop   subscriptions, favorites, search, and collection management
+steamcli server     game servers: browse, query, favourites, history, LAN
 steamcli client     drive the desktop Steam client (run, install, steam:// URLs)
 steamcli cmd        automatic SteamCMD bootstrap, execution, app/workshop downloads
 steamcli asf        IPC calls, bot controls, commands, OpenAPI, two-factor tokens
@@ -238,6 +239,30 @@ The Steam Web API has no method that sets a collection's children, and none that
 | `delete-collection` | preferred; falls back to the publisher-only Web API method |
 
 Commands that need the session say so and name the variable rather than reporting a success that changed nothing. Subscription and favorite lists are read from the account's own Workshop listing, which Steam serves only as HTML; an item Steam declines to render will not appear.
+
+## Game servers
+
+```sh
+./bin/steamcli server browse 730 --not-empty --secure --limit 20
+./bin/steamcli server browse "team fortress 2" --map ctf_2fort
+./bin/steamcli server info 192.168.1.10:27015 --players --rules
+./bin/steamcli server favorites --refresh
+./bin/steamcli server history
+./bin/steamcli server add 10.0.0.5:27015
+./bin/steamcli server remove 3
+./bin/steamcli server lan
+./bin/steamcli server connect 10.0.0.5:27015
+```
+
+Mirrors the desktop client's Game Servers dialog.
+
+`browse` searches Valve's master list through `IGameServersService/GetServerList` and needs a Web API key. It reports what servers *advertise*; `info` queries a server directly over A2S and needs no key. A filter is required — the master list is too large to return unfiltered — and any APPID argument accepts a game name.
+
+`favorites` and `history` read the client's own `serverbrowser_hist.vdf`, so they show exactly what the client shows. `--refresh` queries each one for live status. `add` and `remove` write that same file, so changes appear in the client; the file is round-tripped through the parser so sections this tool does not model survive, writes are atomic, and the original is backed up once beside it. **Close Steam first** — a running client holds the list in memory and rewrites the file on exit; the commands say so when they detect it running.
+
+`lan` broadcasts a server query and reports whoever answers. Steam's own LAN tab uses an internal protocol this cannot reach, so a server that ignores A2S will not appear here even though the client lists it.
+
+Addresses are the *query* port, which for many games is not the port you connect on; a bare host gets `:27015`.
 
 ## Desktop Steam client
 

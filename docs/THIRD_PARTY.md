@@ -15,6 +15,11 @@ Runtime-linked Go modules are pinned by `go.mod` / `go.sum` and copied by `go mo
 | github.com/spf13/pflag | v1.0.9 | Flag parsing (Cobra dependency) | `vendor/github.com/spf13/pflag/LICENSE` |
 | github.com/inconshreveable/mousetrap | v1.1.0 | Windows console behavior (Cobra dependency) | `vendor/github.com/inconshreveable/mousetrap/LICENSE` |
 | github.com/andygrunwald/vdf | v1.1.0 | Valve KeyValues/ACF parsing | `vendor/github.com/andygrunwald/vdf/LICENSE` |
+| github.com/rumblefrog/go-a2s | v1.0.3 | A2S server query protocol | `vendor/github.com/rumblefrog/go-a2s/LICENSE` |
+| github.com/jedib0t/go-pretty/v6 | v6.8.3 | Rendered tables and ANSI colour | `vendor/github.com/jedib0t/go-pretty/v6/LICENSE` |
+| github.com/mattn/go-runewidth | v0.0.16 | Display width for table layout (go-pretty dependency) | `vendor/github.com/mattn/go-runewidth/LICENSE` |
+| github.com/rivo/uniseg | v0.4.7 | Grapheme segmentation (go-runewidth dependency) | `vendor/github.com/rivo/uniseg/LICENSE.txt` |
+| golang.org/x/text | v0.22.0 | Text processing (go-pretty dependency) | `vendor/golang.org/x/text/LICENSE` |
 | github.com/gofrs/flock | v0.13.1 | Cross-process file locks | `vendor/github.com/gofrs/flock/LICENSE` |
 | golang.org/x/term | v0.46.0 | Terminal detection | `vendor/golang.org/x/term/LICENSE` |
 | golang.org/x/sys | v0.48.0 | OS calls for locks/terminals | `vendor/golang.org/x/sys/LICENSE` |

@@ -1474,3 +1474,151 @@ func TestCSVHeaderToggle(t *testing.T) {
 		t.Errorf("data should survive without a header:\n%s", without)
 	}
 }
+
+// --- server ---------------------------------------------------------------
+
+func serverFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	p := filepath.Join(root, "userdata", "1", "7", "remote", "serverbrowser_hist.vdf")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `"Filters"
+{
+	"favorites"
+	{
+		"1" { "name" "Alpha" "address" "10.0.0.1:27015" "LastPlayed" "1529218286" "appid" "440" "accountid" "0" }
+		"2" { "name" "Beta" "address" "10.0.0.2:27015" "LastPlayed" "0" "appid" "0" "accountid" "0" }
+	}
+	"history"
+	{
+		"1" { "name" "Gamma" "address" "10.0.0.3:27015" "LastPlayed" "1600000000" "appid" "730" "accountid" "0" }
+	}
+}
+`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func TestServerFavoritesAndHistory(t *testing.T) {
+	cleanEnv(t)
+	root := serverFixture(t)
+
+	out, err := execute(t, "-o", "json", "server", "favorites", "--root", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var favs []map[string]any
+	if e := json.Unmarshal([]byte(out), &favs); e != nil {
+		t.Fatalf("not JSON: %v\n%s", e, out)
+	}
+	if len(favs) != 2 || favs[0]["address"] != "10.0.0.1:27015" {
+		t.Fatalf("favorites = %+v", favs)
+	}
+
+	out, err = execute(t, "-o", "json", "server", "history", "--root", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hist []map[string]any
+	json.Unmarshal([]byte(out), &hist)
+	if len(hist) != 1 || hist[0]["address"] != "10.0.0.3:27015" {
+		t.Fatalf("history = %+v", hist)
+	}
+}
+
+// Adding and removing must leave the other list untouched and reject bad input.
+func TestServerAddRemoveRoundTrip(t *testing.T) {
+	cleanEnv(t)
+	root := serverFixture(t)
+
+	// --name avoids querying the network for a label.
+	if _, err := execute(t, "server", "add", "10.0.0.9:27015", "--name", "Added", "--root", root); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := execute(t, "-o", "json", "server", "favorites", "--root", root)
+	var favs []map[string]any
+	json.Unmarshal([]byte(out), &favs)
+	if len(favs) != 3 || favs[2]["name"] != "Added" {
+		t.Fatalf("after add: %+v", favs)
+	}
+
+	// A duplicate is refused rather than silently doubling the entry.
+	if _, err := execute(t, "server", "add", "10.0.0.9:27015", "--name", "x", "--root", root); err == nil {
+		t.Error("adding a duplicate should fail")
+	}
+
+	// Remove by index.
+	if _, err := execute(t, "server", "remove", "3", "--root", root); err != nil {
+		t.Fatal(err)
+	}
+	out, _ = execute(t, "-o", "json", "server", "favorites", "--root", root)
+	json.Unmarshal([]byte(out), &favs)
+	if len(favs) != 2 {
+		t.Fatalf("after remove: %+v", favs)
+	}
+
+	// History survived both writes.
+	out, _ = execute(t, "-o", "json", "server", "history", "--root", root)
+	var hist []map[string]any
+	json.Unmarshal([]byte(out), &hist)
+	if len(hist) != 1 {
+		t.Errorf("history was disturbed: %+v", hist)
+	}
+
+	// Out-of-range and unknown addresses are reported, not ignored.
+	if _, err := execute(t, "server", "remove", "99", "--root", root); err == nil {
+		t.Error("an out-of-range index should fail")
+	}
+	if _, err := execute(t, "server", "remove", "10.0.0.250:27015", "--root", root); err == nil {
+		t.Error("removing an address that is not a favourite should fail")
+	}
+}
+
+func TestServerBrowseRequiresAFilter(t *testing.T) {
+	cleanEnv(t)
+	t.Setenv("STEAM_API_KEY", "k")
+	_, err := execute(t, "server", "browse")
+	if err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("an unfiltered browse should be refused, got %v", err)
+	}
+}
+
+func TestServerBrowseRendersMasterList(t *testing.T) {
+	cleanEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Query().Get("filter"), `\appid\730`) {
+			t.Errorf("filter = %q", r.URL.Query().Get("filter"))
+		}
+		w.Write([]byte(`{"response":{"servers":[
+		  {"addr":"1.2.3.4:27015","name":"Quiet","map":"de_dust2","players":2,"max_players":10,"secure":true},
+		  {"addr":"5.6.7.8:27015","name":"Busy","map":"de_mirage","players":9,"max_players":10,"secure":false}]}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("STEAM_API_KEY", "k")
+	t.Setenv("STEAM_WEB_URL", srv.URL)
+
+	out, err := execute(t, "--allow-http", "server", "browse", "730")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Busiest first, so the useful servers are at the top.
+	if strings.Index(out, "Busy") > strings.Index(out, "Quiet") {
+		t.Errorf("servers should be sorted by player count:\n%s", out)
+	}
+	if !strings.Contains(out, "9/10") {
+		t.Errorf("player counts missing:\n%s", out)
+	}
+}
+
+func TestServerAddressDefaultsToQueryPort(t *testing.T) {
+	if got := withDefaultPort("10.0.0.1", 27015); got != "10.0.0.1:27015" {
+		t.Errorf("withDefaultPort = %q", got)
+	}
+	if got := withDefaultPort("10.0.0.1:27020", 27015); got != "10.0.0.1:27020" {
+		t.Errorf("an explicit port should be kept, got %q", got)
+	}
+}

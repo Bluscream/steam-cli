@@ -38,9 +38,26 @@ type Player struct {
 	Duration float32 `json:"duration_seconds"`
 }
 
+// guard converts a panic in the A2S decoder into an error.
+//
+// Server replies are untrusted input from arbitrary hosts, and go-a2s indexes
+// into them without always checking length: a truncated challenge is enough to
+// panic it. A malformed reply must fail one query, not take down the process,
+// so every entry point into the library runs behind this.
+func guard(addr string, err *error) {
+	if r := recover(); r != nil {
+		*err = fmt.Errorf("malformed reply from %s (%v)", addr, r)
+	}
+}
+
 // Query performs A2S_INFO against a server. The address is host:port of the
 // *query* port, which for many games is not the game port.
-func Query(addr string, timeout time.Duration) (Info, error) {
+func Query(addr string, timeout time.Duration) (info Info, err error) {
+	defer guard(addr, &err)
+	return queryInfo(addr, timeout)
+}
+
+func queryInfo(addr string, timeout time.Duration) (Info, error) {
 	c, err := a2s.NewClient(addr, a2s.TimeoutOption(timeout))
 	if err != nil {
 		return Info{}, fmt.Errorf("connect %s: %w", addr, err)
@@ -84,7 +101,12 @@ func Query(addr string, timeout time.Duration) (Info, error) {
 }
 
 // QueryPlayers performs A2S_PLAYER, returning the scoreboard.
-func QueryPlayers(addr string, timeout time.Duration) ([]Player, error) {
+func QueryPlayers(addr string, timeout time.Duration) (players []Player, err error) {
+	defer guard(addr, &err)
+	return queryPlayers(addr, timeout)
+}
+
+func queryPlayers(addr string, timeout time.Duration) ([]Player, error) {
 	c, err := a2s.NewClient(addr, a2s.TimeoutOption(timeout))
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", addr, err)
@@ -104,7 +126,12 @@ func QueryPlayers(addr string, timeout time.Duration) ([]Player, error) {
 }
 
 // QueryRules performs A2S_RULES, the server's convar list.
-func QueryRules(addr string, timeout time.Duration) (map[string]string, error) {
+func QueryRules(addr string, timeout time.Duration) (rules map[string]string, err error) {
+	defer guard(addr, &err)
+	return queryRules(addr, timeout)
+}
+
+func queryRules(addr string, timeout time.Duration) (map[string]string, error) {
 	c, err := a2s.NewClient(addr, a2s.TimeoutOption(timeout))
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", addr, err)
