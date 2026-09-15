@@ -387,7 +387,7 @@ func serverAddCommand(o *options, file func() (string, error)) *cobra.Command {
 			if err := gameserver.Save(path, gameserver.ListFavorites, entries); err != nil {
 				return err
 			}
-			warnIfSteamRunning(cmd.ErrOrStderr())
+			warnIfSteamRunning(cmd.ErrOrStderr(), "this list")
 			return o.print(cmd, map[string]any{"added": addr, "name": name, "favorites": len(entries)})
 		},
 	}
@@ -442,7 +442,7 @@ func serverRemoveCommand(o *options, file func() (string, error)) *cobra.Command
 			if err := gameserver.Save(path, list, entries); err != nil {
 				return err
 			}
-			warnIfSteamRunning(cmd.ErrOrStderr())
+			warnIfSteamRunning(cmd.ErrOrStderr(), "this list")
 			return o.print(cmd, map[string]any{"removed": removed.Address, "name": removed.Name, "remaining": len(entries)})
 		},
 	}
@@ -542,38 +542,15 @@ func boolWord(b bool) string {
 	return "no"
 }
 
-// warnIfSteamRunning says so when the client is up, because it keeps the
-// favourites list in memory and rewrites the file when it exits.
-func warnIfSteamRunning(w io.Writer) {
-	if steamIsRunning() {
-		fmt.Fprintf(w, "%s Steam is running. It holds this list in memory and will overwrite the file on exit; restart Steam to see the change.\n",
-			yellow.Sprint("Note:"))
+// warnIfSteamRunning says so when the client is up, because it keeps these
+// files in memory and rewrites them when it exits.
+func warnIfSteamRunning(w io.Writer, what string) {
+	if library.SteamRunning() {
+		fmt.Fprintf(w, "%s Steam is running. It holds %s in memory and will overwrite the file on exit; restart Steam to see the change.\n",
+			yellow.Sprint("Note:"), what)
 	}
 }
 
-// steamIsRunning reports whether a desktop Steam client is up.
-func steamIsRunning() bool {
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return false // not Linux, or /proc unavailable: do not guess
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if _, err := strconv.Atoi(e.Name()); err != nil {
-			continue
-		}
-		b, err := os.ReadFile("/proc/" + e.Name() + "/comm")
-		if err != nil {
-			continue
-		}
-		if strings.TrimSpace(string(b)) == "steam" {
-			return true
-		}
-	}
-	return false
-}
 
 // runSteamClient hands arguments to the desktop client, reusing the locator and
 // self-reference guard behind "steamcli client".

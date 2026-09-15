@@ -138,7 +138,9 @@ func libraryCommand(o *options) *cobra.Command {
 
 	customSub := &cobra.Command{
 		Use:     "custom",
-		Aliases: []string{"overrides", "compat", "launch-options", "args"},
+		// "compat" and "launch-options" belong to the commands that can change
+		// those settings, not to this read-only listing.
+		Aliases: []string{"overrides", "customised"},
 		Short:   "List installed games that have custom compatibility tools or launch options set",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -149,7 +151,7 @@ func libraryCommand(o *options) *cobra.Command {
 	customSub.Flags().StringArrayVar(&roots, "root", nil, "Steam root directory; repeat for multiple installations")
 	customSub.Flags().StringVar(&sortField, "sort", "", "Sort apps by: appid, name, size, library")
 	customSub.Flags().BoolVar(&showSecrets, "show-secrets", false, "Print credential-like launch option values instead of redacting them")
-	c.AddCommand(customSub)
+	c.AddCommand(customSub, compatCommand(o), launchCommand(o), dlcCommand(o), branchCommand(o), appConfigCommand(o))
 	return c
 }
 

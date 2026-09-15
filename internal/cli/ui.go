@@ -59,10 +59,43 @@ func (o *options) newTable(w io.Writer) table.Writer {
 func (o *options) newDetail(w io.Writer) table.Writer {
 	t := o.newTable(w)
 	t.Style().Options.SeparateHeader = false
-	t.SetColumnConfigs([]table.ColumnConfig{
-		{Number: 1, Colors: text.Colors{text.FgCyan}},
-	})
+	cfg := []table.ColumnConfig{{Number: 1, Colors: text.Colors{text.FgCyan}}}
+	// A single long value — launch options, a file path, a description — would
+	// otherwise stretch the table far past the terminal and wrap mid-cell in
+	// the shell, which breaks the borders. Wrapping inside the cell keeps the
+	// table intact. CSV is left alone: it exists to be parsed.
+	if width := o.detailWidth(w); width > 0 {
+		cfg = append(cfg, table.ColumnConfig{Number: 2, WidthMax: width})
+	}
+	t.SetColumnConfigs(cfg)
 	return t
+}
+
+// detailWidth returns the room a detail table's value column has, or 0 when the
+// output is not a terminal and should not be wrapped at all.
+func (o *options) detailWidth(w io.Writer) int {
+	if o.format == "csv" {
+		return 0
+	}
+	cols := 0
+	// An explicit COLUMNS wins, so output piped into a pager can still be
+	// wrapped to the width the user actually has.
+	if n, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && n > 0 {
+		cols = n
+	} else if f, ok := w.(*os.File); ok {
+		if c, _, err := term.GetSize(int(f.Fd())); err == nil {
+			cols = c
+		}
+	}
+	if cols <= 0 {
+		return 0
+	}
+	// Leave room for the label column and the box-drawing characters.
+	const chrome = 28
+	if cols-chrome < 20 {
+		return 20
+	}
+	return cols - chrome
 }
 
 // renderTable renders the table to w according to the requested output format.
