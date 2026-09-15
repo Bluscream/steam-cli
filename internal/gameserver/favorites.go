@@ -13,6 +13,7 @@ import (
 
 // Entry is one favorite or history record as the client stores it.
 type Entry struct {
+	raw        map[string]any
 	Name       string `json:"name"`
 	Address    string `json:"address"`
 	LastPlayed int64  `json:"last_played,omitempty"`
@@ -106,6 +107,7 @@ func Load(path, list string) ([]Entry, error) {
 			continue
 		}
 		out = append(out, Entry{
+			raw:        e,
 			Name:       steamvdf.Str(e["name"]),
 			Address:    addr,
 			LastPlayed: steamvdf.Atoi64(e["LastPlayed"]),
@@ -138,16 +140,22 @@ func Save(path, list string, entries []Entry) error {
 		if name == "" {
 			name = e.Address
 		}
-		rebuilt[strconv.Itoa(i+1)] = map[string]any{
+		record := map[string]any{}
+		for k, v := range e.raw {
+			record[k] = v
+		}
+		for k, v := range map[string]string{
 			"name":       name,
 			"address":    e.Address,
 			"LastPlayed": strconv.FormatInt(e.LastPlayed, 10),
 			"appid":      strconv.Itoa(e.AppID),
 			"accountid":  strconv.Itoa(e.AccountID),
+		} {
+			steamvdf.Set(record, k, v)
 		}
+		rebuilt[strconv.Itoa(i+1)] = record
 	}
 	filters[list] = rebuilt
 
 	return steamvdf.Write(path, m)
 }
-

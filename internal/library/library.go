@@ -4,13 +4,12 @@ package library
 import (
 	"errors"
 	"fmt"
-	"github.com/andygrunwald/vdf"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
+	"steamcli.local/steam/internal/steamvdf"
 	"strconv"
 	"strings"
 )
@@ -93,22 +92,8 @@ func LoggedInUser(roots []string) (string, error) {
 	}
 	return "", errors.New("no logged-in Steam user found in loginusers.vdf")
 }
-func parse(path string) (map[string]interface{}, error) {
-	f, e := os.Open(path)
-	if e != nil {
-		return nil, e
-	}
-	defer f.Close()
-	s, e := f.Stat()
-	if e != nil {
-		return nil, e
-	}
-	if s.Size() > 16<<20 {
-		return nil, errors.New("VDF file exceeds 16 MiB")
-	}
-	return vdf.NewParser(io.LimitReader(f, 16<<20)).Parse()
-}
-func str(v any) string { s, _ := v.(string); return s }
+func parse(path string) (map[string]interface{}, error) { return steamvdf.Parse(path) }
+func str(v any) string                                  { s, _ := v.(string); return s }
 func Scan(roots []string) (Report, error) {
 	r := Report{Libraries: []string{}, Apps: []App{}}
 	seen := map[string]bool{}
@@ -217,26 +202,16 @@ func ScanCompatTools(roots []string) map[string]string {
 	}
 	out := make(map[string]string)
 	for _, root := range roots {
-		path := filepath.Join(root, "config", "config.vdf")
-		m, err := parse(path)
+		_, _, ctm, err := compatMapping(root, false)
 		if err != nil {
 			continue
 		}
-		// Structure: InstallConfigStore -> Software -> Valve -> Steam -> CompatToolMapping
-		ics, ok := m["InstallConfigStore"].(map[string]interface{})
-		if !ok {
-			ics = m
-		}
-		software, _ := ics["Software"].(map[string]interface{})
-		valve, _ := software["Valve"].(map[string]interface{})
-		steam, _ := valve["Steam"].(map[string]interface{})
-		ctm, _ := steam["CompatToolMapping"].(map[string]interface{})
 		for id, val := range ctm {
 			if id == "0" {
 				continue // 0 is global default
 			}
 			if entry, ok := val.(map[string]interface{}); ok {
-				name := str(entry["name"])
+				name := steamvdf.Str(steamvdf.Get(entry, "name"))
 				if name != "" {
 					out[id] = name
 				}
@@ -263,21 +238,10 @@ func ScanLaunchOptions(roots []string) map[string]string {
 			if err != nil {
 				continue
 			}
-			// UserLocalConfigStore -> Software -> Valve -> Steam -> apps / Apps
-			ulcs, ok := m["UserLocalConfigStore"].(map[string]interface{})
-			if !ok {
-				ulcs = m
-			}
-			software, _ := ulcs["Software"].(map[string]interface{})
-			valve, _ := software["Valve"].(map[string]interface{})
-			steam, _ := valve["Steam"].(map[string]interface{})
-			apps, ok := steam["apps"].(map[string]interface{})
-			if !ok {
-				apps, _ = steam["Apps"].(map[string]interface{})
-			}
+			apps := appsSection(m, false)
 			for id, appData := range apps {
 				if ad, ok := appData.(map[string]interface{}); ok {
-					lo := str(ad["LaunchOptions"])
+					lo := steamvdf.Str(steamvdf.Get(ad, "LaunchOptions"))
 					if lo != "" {
 						out[id] = lo
 					}

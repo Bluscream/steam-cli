@@ -225,3 +225,11 @@ the binary without being recorded in `docs/THIRD_PARTY.md`, the same class of
 gap as the embedded xPaw catalog. All four are now documented, the bundled
 licence file regenerated, and `internal/meta` holds a test that fails when a
 module in `go.mod` is missing from the document.
+
+## 2026-09-15 Claude handoff audit
+
+See [the audit](AUDIT-2026-09-15.md) for findings and scope. Final `go test -race ./...`, `go vet ./...`, formatting, and `git diff --check` passed. New regression tests cover strict VDF rejection/round-trips, secure backup retention, concurrent-writer exclusion, account selection, root aliases, symlinked tool discovery, launch/DLC/branch/compatibility writers, CLI write refusal and redaction, branch-download argument construction, server editing and unknown-field preservation, and failed CM discovery.
+
+`STEAMCLI_AUDIT_ROOT` opt-in validation parsed and rewrote **eight real configuration/manifest files on temporary copies only**. Local read-only checks passed for compatibility tools, SteamVR branch/DLC metadata and branch-download dry-run. Public HTTP checks returned Store/Community/Web API 200 and Help 302; the live player-count request succeeded. No real Steam configurations, subscriptions, favorites or game files were changed.
+
+The final source cross-built CGO-free for Linux, macOS and Windows on amd64 and arm64. A separate vendored build with `GOPROXY=off`, `GOSUMDB=off` and the already installed compiler passed. The local binary is `0.10.0-dev`; these are local development artifacts, not a published release. Native macOS/Windows process inspection was cross-compiled but not executed here. Real branch downloads and Steam's adoption of edited DLC/branch preferences were not exercised; the tests use temporary files, and SteamCMD's existing validation is reused.

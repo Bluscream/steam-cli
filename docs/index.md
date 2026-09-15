@@ -71,3 +71,13 @@ so plainly rather than reporting a success that changed nothing.
 
 Public domain, under [the Unlicense](https://github.com/Bluscream/steam-cli/blob/main/LICENSE).
 Not affiliated with or endorsed by Valve Corporation.
+
+## Local game settings
+
+The development build adds `library compat list|get|set`, account-selectable
+`library launch get|set`, `library dlc list|enable|disable`, `library branch get|set|download`,
+and `library app`. `server edit` updates a favourite's label or recorded AppID.
+Close Steam before writes. Local edits keep private backups and refuse ambiguous
+configuration files; `--force` explicitly overrides the running-client check.
+`branch set` records a preference only; `branch download` invokes managed SteamCMD.
+See the [handoff audit](AUDIT-2026-09-15.md) for changes, evidence, and limitations.

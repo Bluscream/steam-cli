@@ -22,34 +22,13 @@ type CompatTool struct {
 	// compatibilitytools.d, "steam" for one installed as an app, and "in-use"
 	// for a name that only appears in the existing mapping.
 	Source string `json:"source"`
-	Path    string `json:"path,omitempty"`
-	AppID   string `json:"appid,omitempty"`
+	Path   string `json:"path,omitempty"`
+	AppID  string `json:"appid,omitempty"`
 	// InUse counts the apps currently mapped to this tool.
 	InUse int `json:"in_use"`
-	// Verified is true when Name came from a manifest or from the existing
-	// mapping, rather than being inferred from a known Valve AppID.
+	// Verified is true when Name came from an installed manifest. Existing
+	// mappings alone do not establish that a tool is available.
 	Verified bool `json:"verified"`
-}
-
-// valveToolNames maps the AppIDs of Valve's own Proton builds to the internal
-// names the client writes into CompatToolMapping.
-//
-// Valve keeps these names in appinfo.vdf, a binary cache with an unstable
-// format. A tool whose AppID is not listed here is still reported, with an
-// empty Name and Verified false, so a caller can see it exists even though this
-// program cannot name it.
-var valveToolNames = map[string]string{
-	"858280":  "proton_3.7",
-	"930400":  "proton_4.2",
-	"1054830": "proton_4.11",
-	"1113280": "proton_5.0",
-	"1245040": "proton_6.3",
-	"1580130": "proton_7.0",
-	"1887720": "proton_8.0",
-	"2180100": "proton_hotfix",
-	"2348590": "proton_9.0",
-	"2805730": "proton_9.0",
-	"1493710": "proton_experimental",
 }
 
 // AvailableCompatTools lists every compatibility tool the client could be set
@@ -59,7 +38,7 @@ var valveToolNames = map[string]string{
 // own manifest and so name themselves. Valve's Proton builds are installed as
 // ordinary apps and are recognised by a toolmanifest.vdf declaring the "proton"
 // compatibility layer. Finally, any name already present in CompatToolMapping
-// is known to work, whether or not its tool was found on disk.
+// is reported as configured, without claiming its tool is available on disk.
 func AvailableCompatTools(roots []string) []CompatTool {
 	if len(roots) == 0 {
 		roots = Defaults()
@@ -98,7 +77,7 @@ func AvailableCompatTools(roots []string) []CompatTool {
 			prev.InUse = count
 			continue
 		}
-		add(CompatTool{Name: name, Source: "in-use", InUse: count, Verified: true})
+		add(CompatTool{Name: name, Source: "in-use", InUse: count, Verified: false})
 	}
 
 	out := make([]CompatTool, 0, len(byName)+len(unnamed))
@@ -129,7 +108,7 @@ func customCompatTools(dir string) []CompatTool {
 	}
 	for _, e := range entries {
 		path := filepath.Join(dir, e.Name())
-		if e.IsDir() {
+		if st, err := os.Stat(path); err == nil && st.IsDir() {
 			path = filepath.Join(path, "compatibilitytool.vdf")
 		} else if !strings.EqualFold(filepath.Ext(e.Name()), ".vdf") {
 			continue
@@ -178,7 +157,14 @@ func installedCompatTools(roots []string) []CompatTool {
 		if layer != "proton" {
 			continue
 		}
-		name, known := valveToolNames[app.AppID]
+		name, known := "", false
+		for _, tool := range customCompatTools(app.InstallDir) {
+			out = append(out, CompatTool{Name: tool.Name, DisplayName: tool.DisplayName, Source: "steam", Path: app.InstallDir, AppID: app.AppID, Verified: true})
+			known = true
+		}
+		if known {
+			continue
+		}
 		out = append(out, CompatTool{
 			Name:        name,
 			DisplayName: app.Name,
@@ -224,7 +210,7 @@ func compatMapping(root string, create bool) (string, map[string]any, map[string
 		if !create {
 			return path, m, nil, nil
 		}
-		steam = steamvdf.Section(store, "Software", "Valve", "Steam")
+		steam = steamvdf.Section(store, caseChain(store, "Software", "Valve", "Steam")...)
 	}
 	key, ok := steamvdf.CaseKey(steam, "CompatToolMapping")
 	if !ok && !create {
@@ -242,11 +228,11 @@ func caseChain(m map[string]any, path ...string) []string {
 	out := make([]string, 0, len(path))
 	for _, k := range path {
 		if m == nil {
-			return path
+			return append(out, path[len(out):]...)
 		}
 		actual, ok := steamvdf.CaseKey(m, k)
 		if !ok {
-			return path
+			return append(out, path[len(out):]...)
 		}
 		out = append(out, actual)
 		m, _ = m[actual].(map[string]any)
@@ -293,6 +279,11 @@ func SetCompatTool(roots []string, appID, tool string) (path string, err error) 
 	if err != nil {
 		return "", err
 	}
+	unlock, err := steamvdf.Lock(filepath.Join(root, "config", "config.vdf"))
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	path, m, mapping, err := compatMapping(root, true)
 	if err != nil {
 		return path, err
@@ -320,10 +311,16 @@ func SetCompatTool(roots []string, appID, tool string) (path string, err error) 
 // installation is ever the live one, and writing to a second copy would have no
 // effect the user could see.
 func configRoot(roots []string) (string, error) {
+	var files []string
 	for _, root := range roots {
-		if _, err := os.Stat(filepath.Join(root, "config", "config.vdf")); err == nil {
-			return root, nil
+		p := filepath.Join(root, "config", "config.vdf")
+		if _, err := os.Stat(p); err == nil {
+			files = append(files, p)
 		}
 	}
-	return "", fmt.Errorf("no config/config.vdf found under %s; pass --root /path/to/Steam", strings.Join(roots, ", "))
+	files = uniqueFiles(files)
+	if len(files) != 1 {
+		return "", fmt.Errorf("expected one Steam config, found %d; pass --root /path/to/Steam", len(files))
+	}
+	return filepath.Dir(filepath.Dir(files[0])), nil
 }

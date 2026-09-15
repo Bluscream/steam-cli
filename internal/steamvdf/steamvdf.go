@@ -9,17 +9,15 @@
 package steamvdf
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/andygrunwald/vdf"
 )
 
 // MaxSize bounds a KeyValues file. The largest thing Steam keeps in this
@@ -43,12 +41,11 @@ func Parse(path string) (map[string]any, error) {
 	if info.Size() > MaxSize {
 		return nil, fmt.Errorf("%s exceeds %d bytes", path, MaxSize)
 	}
-	return vdf.NewParser(io.LimitReader(f, MaxSize)).Parse()
-}
-
-// ParseBytes is Parse for an in-memory document.
-func ParseBytes(b []byte) (map[string]any, error) {
-	return vdf.NewParser(bytes.NewReader(b)).Parse()
+	b, err := io.ReadAll(io.LimitReader(f, MaxSize+1))
+	if err != nil {
+		return nil, err
+	}
+	return ParseBytes(b)
 }
 
 // Str returns a leaf as a string, or "" if it is absent or a subtree.
@@ -146,8 +143,11 @@ func writeObject(b *strings.Builder, m map[string]any, depth int) {
 	sort.Slice(keys, func(i, j int) bool {
 		a, ea := strconv.Atoi(keys[i])
 		c, ec := strconv.Atoi(keys[j])
-		if ea == nil && ec == nil {
+		if ea == nil && ec == nil && a != c {
 			return a < c
+		}
+		if (ea == nil) != (ec == nil) {
+			return ea == nil
 		}
 		return keys[i] < keys[j]
 	})
@@ -163,18 +163,21 @@ func writeObject(b *strings.Builder, m map[string]any, depth int) {
 	}
 }
 
-var quoter = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+var quoter = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`)
 
 func quote(s string) string { return `"` + quoter.Replace(s) + `"` }
 
 // Write renders a tree over an existing file, keeping a one-time backup and
 // replacing the file atomically.
 func Write(path string, m map[string]any) error {
+	if st, err := os.Lstat(path); err == nil && !st.Mode().IsRegular() {
+		return fmt.Errorf("refusing to replace non-regular file: %s", path)
+	}
 	data := Render(m)
 	// Re-reading what we are about to write is cheap next to losing a config
 	// file to a serialiser bug on an input shape we have not seen.
-	if _, err := ParseBytes(data); err != nil {
-		return fmt.Errorf("refusing to write %s: the result does not parse back (%w)", path, err)
+	if parsed, err := ParseBytes(data); err != nil || !reflect.DeepEqual(parsed, m) {
+		return fmt.Errorf("refusing to write %s: the result does not round-trip (%v)", path, err)
 	}
 	if err := BackupOnce(path); err != nil {
 		return err
@@ -187,17 +190,43 @@ func Write(path string, m map[string]any) error {
 // is the copy worth keeping.
 func BackupOnce(path string) error {
 	bak := path + BackupSuffix
-	if _, err := os.Stat(bak); err == nil {
-		return nil
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil // nothing to preserve
+	if st, err := os.Lstat(bak); err == nil {
+		if !st.Mode().IsRegular() {
+			return fmt.Errorf("backup is not a regular file: %s", bak)
 		}
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return os.WriteFile(bak, b, 0o644)
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(bak, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	ok := false
+	defer func() {
+		f.Close()
+		if !ok {
+			os.Remove(bak)
+		}
+	}()
+	if _, err = f.Write(b); err != nil {
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	ok = true
+	return nil
 }
 
 // WriteAtomic replaces path with data via a temporary file in the same
@@ -221,7 +250,7 @@ func WriteAtomic(path string, data []byte) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	mode := os.FileMode(0o644)
+	mode := os.FileMode(0o600)
 	if st, err := os.Stat(path); err == nil {
 		mode = st.Mode().Perm()
 	}

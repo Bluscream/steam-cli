@@ -370,7 +370,7 @@ Commands that act on bots take a selector: a positional argument, the persistent
 ```sh
 ./bin/steamcli --offline library
 ./bin/steamcli --offline library --sort size          # sort by: size, name, appid, library
-./bin/steamcli --offline library custom               # aliases: overrides, compat, launch-options, args
+./bin/steamcli --offline library custom               # aliases: overrides, customised
 ./bin/steamcli --offline library --custom             # filter installed games to those with custom compat/args
 ./bin/steamcli --offline library --root /path/to/Steam
 ./bin/steamcli --offline id 'STEAM_0:0:11101'
@@ -382,6 +382,36 @@ Commands that act on bots take a selector: a positional argument, the persistent
 ```
 
 `library custom` lists games with a non-default compatibility tool or custom launch options. **Launch-option values that look like credentials are redacted** — `-password`, `-rcon_password`, `--token`, `--api-key`, a URL query secret, or inline `user:pass@` userinfo — in both the table and `-o json`, because these listings get pasted into issues and chat logs. `--show-secrets` prints them. Ordinary options are never altered.
+
+### Per-game settings
+
+```sh
+steamcli library compat list
+steamcli library compat get 730
+steamcli library compat set 730 proton_experimental
+steamcli library compat set 730                     # clear override
+steamcli library compat set --global                # clear global override
+steamcli library launch get 730 --account ACCOUNT_ID
+steamcli library launch set 730 --account ACCOUNT_ID -- '-novid %command%'
+steamcli library launch set 730 --account ACCOUNT_ID # clear options
+steamcli library dlc list 730
+steamcli library dlc disable APPID DLC_APPID
+steamcli library dlc enable APPID DLC_APPID
+steamcli library branch get 730
+steamcli library branch set 730 BRANCH               # record preference only
+steamcli library branch download 730 BRANCH --user ACCOUNT --dry-run
+steamcli library branch download 730 BRANCH --user ACCOUNT
+steamcli library app 730 --account ACCOUNT_ID
+steamcli server edit HOST:PORT --name 'New label'
+```
+
+All local settings commands accept `--root`. Launch-option reads and writes require `--account` when several account files exist; this is the numeric userdata directory ID, not a login name or SteamID64. Symlink aliases of one installation are deduplicated. Compatibility mappings are global to an installation. Custom tool directories can be symlinks. Names come from manifests or existing mappings; entries without a verified manifest are marked unverified instead of guessing a Proton name from its AppID.
+
+Close Steam before local writes. Library and server writers refuse if Steam is running or process inspection fails; `--force` explicitly overrides that check for local file edits. They use private one-time `.steamcli-backup` files, same-directory atomic replacement, and locks against concurrent CLI edits. Locks cannot stop Steam itself. Unsupported or ambiguous VDF syntax is rejected to prevent silent data loss. Rewrites preserve the parsed data, not whitespace, comments, or original key ordering.
+
+`dlc list` shows recorded DLC depots and disabled selections, including disabled DLC whose depots have been removed. It is not an ownership inventory, and several depots may belong to one DLC. Enabling/disabling records the manifest selection; Steam and the game determine download and runtime behavior.
+
+`branch set` changes only the requested branch; mounted state remains untouched. Omit BRANCH or use `public` to clear that request. `branch download` reuses managed SteamCMD to download into the installed game's directory, defaults to the public branch, and verifies SteamCMD's success marker and manifest. It does not rewrite the desktop client's manifest to claim completion: restart Steam to reconcile the files. A password-protected beta may require Steam's UI or `cmd run` with SteamCMD's beta-password argument.
 
 Library discovery checks common Windows/macOS/Linux locations and Linux Flatpak. `--root` handles nonstandard/custom installations. Both legacy and modern `libraryfolders.vdf` layouts are supported. Malformed manifests produce warnings in the JSON report; their contents are never executed. Library results describe local manifest state, not proof of an account license or cloud availability.
 

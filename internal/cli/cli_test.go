@@ -1532,6 +1532,9 @@ func TestServerFavoritesAndHistory(t *testing.T) {
 
 // Adding and removing must leave the other list untouched and reject bad input.
 func TestServerAddRemoveRoundTrip(t *testing.T) {
+	previous := steamRunning
+	steamRunning = func() bool { return false }
+	defer func() { steamRunning = previous }()
 	cleanEnv(t)
 	root := serverFixture(t)
 

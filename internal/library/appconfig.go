@@ -2,7 +2,6 @@ package library
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -74,6 +73,19 @@ func FindManifest(roots []string, appID string) (string, error) {
 
 // LoadAppConfig reads everything this package can change about one installed app.
 func LoadAppConfig(roots []string, appID string) (AppConfig, error) {
+	return loadAppConfig(roots, "", appID, true)
+}
+
+// LoadManifestConfig reads branch/DLC state without selecting a user account.
+func LoadManifestConfig(roots []string, appID string) (AppConfig, error) {
+	return loadAppConfig(roots, "", appID, false)
+}
+
+func LoadAppConfigForAccount(roots []string, accountID, appID string) (AppConfig, error) {
+	return loadAppConfig(roots, accountID, appID, true)
+}
+
+func loadAppConfig(roots []string, accountID, appID string, launch bool) (AppConfig, error) {
 	manifest, err := FindManifest(roots, appID)
 	if err != nil {
 		return AppConfig{}, err
@@ -82,7 +94,7 @@ func LoadAppConfig(roots []string, appID string) (AppConfig, error) {
 	if err != nil {
 		return AppConfig{}, err
 	}
-	state := steamvdf.Obj(m, "AppState")
+	state := steamvdf.Obj(m, keyOf(m, "AppState"))
 	if state == nil {
 		return AppConfig{}, fmt.Errorf("%s has no AppState section", manifest)
 	}
@@ -93,8 +105,20 @@ func LoadAppConfig(roots []string, appID string) (AppConfig, error) {
 		Branch:   readBranch(state),
 		DLC:      readDLC(state),
 	}
-	if path, opts, ok := launchOptionsFor(roots, appID); ok {
-		cfg.LaunchOptions, cfg.LocalConfig = opts, path
+	if launch && len(LocalConfigFiles(roots)) > 0 {
+		path, err := localConfigFile(roots, accountID)
+		if err != nil {
+			return AppConfig{}, err
+		}
+		m, err := steamvdf.Parse(path)
+		if err != nil {
+			return AppConfig{}, err
+		}
+		entry := steamvdf.Obj(appsSection(m, false), appID)
+		cfg.LocalConfig = path
+		cfg.LaunchOptions = steamvdf.Str(steamvdf.Get(entry, "LaunchOptions"))
+	} else if accountID != "" {
+		return AppConfig{}, fmt.Errorf("no localconfig.vdf for account %s", accountID)
 	}
 	return cfg, nil
 }
@@ -119,26 +143,31 @@ func keyOf(m map[string]any, key string) string {
 // the AppID it belongs to; the rest are the base game's own depots.
 func readDLC(state map[string]any) []DLC {
 	depots := steamvdf.Obj(state, keyOf(state, "InstalledDepots"))
-	if depots == nil {
-		return nil
-	}
+
 	disabled := map[string]bool{}
 	for _, id := range splitList(steamvdf.Str(steamvdf.Get(steamvdf.Obj(state, keyOf(state, "UserConfig")), "DisabledDLC"))) {
 		disabled[id] = true
 	}
 	var out []DLC
+	seen := map[string]bool{}
 	for depot, v := range depots {
 		entry, _ := v.(map[string]any)
 		id := steamvdf.Str(steamvdf.Get(entry, "dlcappid"))
 		if id == "" {
 			continue
 		}
+		seen[id] = true
 		out = append(out, DLC{
 			AppID:   id,
 			Depot:   depot,
 			Size:    steamvdf.Atoi64(steamvdf.Get(entry, "size")),
 			Enabled: !disabled[id],
 		})
+	}
+	for id := range disabled {
+		if !seen[id] {
+			out = append(out, DLC{AppID: id, Enabled: false})
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		a, ea := strconv.Atoi(out[i].AppID)
@@ -169,6 +198,9 @@ func splitList(s string) []string {
 // Steam was told to fetch, not an instruction that moves files, so the app
 // stays on its current build until Steam or SteamCMD updates it.
 func SetBranch(roots []string, appID, branch string) (manifest string, err error) {
+	if branch == "public" {
+		branch = ""
+	}
 	if strings.ContainsAny(branch, "\"\\\n\r") {
 		return "", fmt.Errorf("branch name contains characters KeyValues cannot hold: %q", branch)
 	}
@@ -228,6 +260,11 @@ func editManifest(roots []string, appID string, edit func(state map[string]any) 
 	if err != nil {
 		return "", err
 	}
+	unlock, err := steamvdf.Lock(manifest)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	m, err := steamvdf.Parse(manifest)
 	if err != nil {
 		return manifest, err
@@ -249,7 +286,7 @@ func editManifest(roots []string, appID string, edit func(state map[string]any) 
 // appsSection returns the per-app section of a parsed localconfig.vdf, which
 // Steam has spelled both "apps" and "Apps".
 func appsSection(m map[string]any, create bool) map[string]any {
-	store := steamvdf.Obj(m, "UserLocalConfigStore")
+	store := steamvdf.Obj(m, keyOf(m, "UserLocalConfigStore"))
 	if store == nil {
 		store = m
 	}
@@ -258,7 +295,7 @@ func appsSection(m map[string]any, create bool) map[string]any {
 		if !create {
 			return nil
 		}
-		steam = steamvdf.Section(store, "Software", "Valve", "Steam")
+		steam = steamvdf.Section(store, caseChain(store, "Software", "Valve", "Steam")...)
 	}
 	key, ok := steamvdf.CaseKey(steam, "apps")
 	if !ok && !create {
@@ -286,31 +323,7 @@ func LocalConfigFiles(roots []string) []string {
 		out = append(out, matches...)
 	}
 	sort.Strings(out)
-	return out
-}
-
-// launchOptionsFor finds the launch options set for an app, and the file they
-// came from.
-func launchOptionsFor(roots []string, appID string) (string, string, bool) {
-	for _, path := range LocalConfigFiles(roots) {
-		m, err := steamvdf.Parse(path)
-		if err != nil {
-			continue
-		}
-		apps := appsSection(m, false)
-		if apps == nil {
-			continue
-		}
-		key, ok := steamvdf.CaseKey(apps, appID)
-		if !ok {
-			continue
-		}
-		entry, _ := apps[key].(map[string]any)
-		if opts := steamvdf.Str(steamvdf.Get(entry, "LaunchOptions")); opts != "" {
-			return path, opts, true
-		}
-	}
-	return "", "", false
+	return uniqueFiles(out)
 }
 
 // SetLaunchOptions writes an app's launch options, or clears them when opts is
@@ -326,32 +339,15 @@ func SetLaunchOptions(roots []string, accountID, appID, opts string) (path strin
 	if strings.ContainsAny(opts, "\n\r") {
 		return "", fmt.Errorf("launch options cannot contain newlines")
 	}
-	files := LocalConfigFiles(roots)
-	if accountID != "" {
-		var matched []string
-		for _, f := range files {
-			if filepath.Base(filepath.Dir(filepath.Dir(f))) == accountID {
-				matched = append(matched, f)
-			}
-		}
-		if len(matched) == 0 {
-			return "", fmt.Errorf("no localconfig.vdf for account %s", accountID)
-		}
-		files = matched
+	path, err = localConfigFile(roots, accountID)
+	if err != nil {
+		return "", err
 	}
-	switch len(files) {
-	case 0:
-		return "", fmt.Errorf("no localconfig.vdf found; sign in to the desktop client at least once")
-	case 1:
-	default:
-		var ids []string
-		for _, f := range files {
-			ids = append(ids, filepath.Base(filepath.Dir(filepath.Dir(f))))
-		}
-		return "", fmt.Errorf("several accounts have signed in on this machine (%s); pass --account to choose one", strings.Join(ids, ", "))
+	unlock, err := steamvdf.Lock(path)
+	if err != nil {
+		return "", err
 	}
-
-	path = files[0]
+	defer unlock()
 	m, err := steamvdf.Parse(path)
 	if err != nil {
 		return path, err
@@ -380,27 +376,31 @@ func AccountIDs(roots []string) []string {
 	return out
 }
 
-// SteamRunning reports whether a desktop Steam client is running, which matters
-// because it owns these files and rewrites them from memory when it exits.
-func SteamRunning() bool {
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return false
+func localConfigFile(roots []string, accountID string) (string, error) {
+	files := LocalConfigFiles(roots)
+	if accountID != "" {
+		var matched []string
+		for _, f := range files {
+			if filepath.Base(filepath.Dir(filepath.Dir(f))) == accountID {
+				matched = append(matched, f)
+			}
+		}
+		if len(matched) == 0 {
+			return "", fmt.Errorf("no localconfig.vdf for account %s", accountID)
+		}
+		files = matched
 	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+	switch len(files) {
+	case 0:
+		return "", fmt.Errorf("no localconfig.vdf found; sign in to the desktop client at least once")
+	case 1:
+	default:
+		var ids []string
+		for _, f := range files {
+			ids = append(ids, filepath.Base(filepath.Dir(filepath.Dir(f))))
 		}
-		if _, err := strconv.Atoi(e.Name()); err != nil {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join("/proc", e.Name(), "comm"))
-		if err != nil {
-			continue
-		}
-		if strings.TrimSpace(string(b)) == "steam" {
-			return true
-		}
+		return "", fmt.Errorf("several accounts have signed in on this machine (%s); pass --account to choose one", strings.Join(ids, ", "))
 	}
-	return false
+
+	return files[0], nil
 }

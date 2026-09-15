@@ -137,7 +137,7 @@ func libraryCommand(o *options) *cobra.Command {
 	c.Flags().BoolVar(&showSecrets, "show-secrets", false, "Print credential-like launch option values instead of redacting them")
 
 	customSub := &cobra.Command{
-		Use:     "custom",
+		Use: "custom",
 		// "compat" and "launch-options" belong to the commands that can change
 		// those settings, not to this read-only listing.
 		Aliases: []string{"overrides", "customised"},

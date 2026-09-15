@@ -17,6 +17,7 @@ import (
 	"steamcli.local/steam/internal/gameserver"
 	"steamcli.local/steam/internal/library"
 	"steamcli.local/steam/internal/steamclient"
+	"steamcli.local/steam/internal/steamvdf"
 )
 
 func serverCommand(o *options) *cobra.Command {
@@ -68,6 +69,7 @@ func serverCommand(o *options) *cobra.Command {
 		serverListCommand(o, gameserver.ListHistory, historyFile),
 		serverAddCommand(o, historyFile),
 		serverRemoveCommand(o, historyFile),
+		serverEditCommand(o, historyFile),
 		serverLANCommand(o),
 		serverConnectCommand(o),
 	)
@@ -343,6 +345,7 @@ func (o *options) renderEntries(w io.Writer, entries []gameserver.Entry, status 
 }
 
 func serverAddCommand(o *options, file func() (string, error)) *cobra.Command {
+	var force bool
 	var name string
 	var appID int
 	c := &cobra.Command{
@@ -363,6 +366,14 @@ func serverAddCommand(o *options, file func() (string, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := confirmWrite(cmd, force, "server browser settings"); err != nil {
+				return err
+			}
+			unlock, err := steamvdf.Lock(path)
+			if err != nil {
+				return err
+			}
+			defer unlock()
 			entries, err := gameserver.Load(path, gameserver.ListFavorites)
 			if err != nil {
 				return err
@@ -387,16 +398,17 @@ func serverAddCommand(o *options, file func() (string, error)) *cobra.Command {
 			if err := gameserver.Save(path, gameserver.ListFavorites, entries); err != nil {
 				return err
 			}
-			warnIfSteamRunning(cmd.ErrOrStderr(), "this list")
 			return o.print(cmd, map[string]any{"added": addr, "name": name, "favorites": len(entries)})
 		},
 	}
 	c.Flags().StringVar(&name, "name", "", "Label to store (default: the server's own name)")
 	c.Flags().IntVar(&appID, "appid", 0, "AppID to record alongside the entry")
+	c.Flags().BoolVar(&force, "force", false, "Write even though Steam is running")
 	return c
 }
 
 func serverRemoveCommand(o *options, file func() (string, error)) *cobra.Command {
+	var force bool
 	var fromHistory bool
 	c := &cobra.Command{
 		Use:     "remove ADDRESS|INDEX",
@@ -412,6 +424,14 @@ func serverRemoveCommand(o *options, file func() (string, error)) *cobra.Command
 			if err != nil {
 				return err
 			}
+			if err := confirmWrite(cmd, force, "server browser settings"); err != nil {
+				return err
+			}
+			unlock, err := steamvdf.Lock(path)
+			if err != nil {
+				return err
+			}
+			defer unlock()
 			entries, err := gameserver.Load(path, list)
 			if err != nil {
 				return err
@@ -442,11 +462,11 @@ func serverRemoveCommand(o *options, file func() (string, error)) *cobra.Command
 			if err := gameserver.Save(path, list, entries); err != nil {
 				return err
 			}
-			warnIfSteamRunning(cmd.ErrOrStderr(), "this list")
 			return o.print(cmd, map[string]any{"removed": removed.Address, "name": removed.Name, "remaining": len(entries)})
 		},
 	}
 	c.Flags().BoolVar(&fromHistory, "history", false, "Remove from the history list instead of favourites")
+	c.Flags().BoolVar(&force, "force", false, "Write even though Steam is running")
 	return c
 }
 
@@ -542,16 +562,6 @@ func boolWord(b bool) string {
 	return "no"
 }
 
-// warnIfSteamRunning says so when the client is up, because it keeps these
-// files in memory and rewrites them when it exits.
-func warnIfSteamRunning(w io.Writer, what string) {
-	if library.SteamRunning() {
-		fmt.Fprintf(w, "%s Steam is running. It holds %s in memory and will overwrite the file on exit; restart Steam to see the change.\n",
-			yellow.Sprint("Note:"), what)
-	}
-}
-
-
 // runSteamClient hands arguments to the desktop client, reusing the locator and
 // self-reference guard behind "steamcli client".
 func runSteamClient(o *options, cmd *cobra.Command, args []string) error {
@@ -562,4 +572,54 @@ func runSteamClient(o *options, cmd *cobra.Command, args []string) error {
 	}
 	l := steamclient.Locator{Path: s.SteamClientPath, Self: self, DefaultArgs: s.SteamClientArgs}
 	return l.Run(cmd.Context(), args, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+}
+
+func serverEditCommand(o *options, file func() (string, error)) *cobra.Command {
+	var name string
+	var appID int
+	var force bool
+	c := &cobra.Command{Use: "edit ADDRESS", Short: "Change a favourite server's label or recorded AppID", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("appid") {
+			return fmt.Errorf("pass --name or --appid to edit a favourite")
+		}
+		if appID < 0 {
+			return fmt.Errorf("AppID must not be negative")
+		}
+		if err := confirmWrite(cmd, force, "server browser settings"); err != nil {
+			return err
+		}
+		path, err := file()
+		if err != nil {
+			return err
+		}
+		unlock, err := steamvdf.Lock(path)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		entries, err := gameserver.Load(path, gameserver.ListFavorites)
+		if err != nil {
+			return err
+		}
+		address := withDefaultPort(args[0], 27015)
+		for i := range entries {
+			if strings.EqualFold(entries[i].Address, address) {
+				if cmd.Flags().Changed("name") {
+					entries[i].Name = name
+				}
+				if cmd.Flags().Changed("appid") {
+					entries[i].AppID = appID
+				}
+				if err := gameserver.Save(path, gameserver.ListFavorites, entries); err != nil {
+					return err
+				}
+				return o.print(cmd, map[string]any{"edited": entries[i]})
+			}
+		}
+		return fmt.Errorf("%s is not in your favourites", address)
+	}}
+	c.Flags().StringVar(&name, "name", "", "New label")
+	c.Flags().IntVar(&appID, "appid", 0, "New recorded AppID")
+	c.Flags().BoolVar(&force, "force", false, "Write even though Steam is running")
+	return c
 }

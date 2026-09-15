@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"io"
+	"path/filepath"
+	"steamcli.local/steam/internal/steamvdf"
 	"strconv"
 	"strings"
 
@@ -17,13 +19,15 @@ func rootsFlag(c *cobra.Command, roots *[]string) {
 	c.Flags().StringArrayVar(roots, "root", nil, "Steam root directory; repeat for multiple installations")
 }
 
+var steamRunning = library.SteamRunning
+
 // confirmWrite gates a change to a file the desktop client owns.
 //
 // Steam keeps config.vdf, localconfig.vdf and the app manifests in memory while
 // it runs and rewrites them on exit, so an edit made underneath a running client
 // is silently lost. Refusing by default is the only way this reliably works.
 func confirmWrite(cmd *cobra.Command, force bool, what string) error {
-	if !library.SteamRunning() {
+	if !steamRunning() {
 		return nil
 	}
 	if force {
@@ -31,7 +35,7 @@ func confirmWrite(cmd *cobra.Command, force bool, what string) error {
 			yellow.Sprint("Warning:"), what)
 		return nil
 	}
-	return fmt.Errorf("Steam is running and will overwrite %s when it exits.\n"+
+	return fmt.Errorf("Steam is running (or process inspection is unavailable); cannot safely edit %s.\n"+
 		"Close the desktop client first, or pass --force to write anyway", what)
 }
 
@@ -90,7 +94,7 @@ func compatListCommand(o *options) *cobra.Command {
 				}
 				for _, tool := range tools {
 					if !tool.Verified {
-						fmt.Fprintf(w, "%s %s has no known internal name; set it in the client rather than here.\n",
+						fmt.Fprintf(w, "%s %s was not verified from an installed tool manifest; check it in the client.\n",
 							yellow.Sprint("Note:"), tool.DisplayName)
 					}
 				}
@@ -148,16 +152,24 @@ func compatSetCommand(o *options) *cobra.Command {
 		Example: "  steamcli library compat set 438100 proton_experimental\n" +
 			"  steamcli library compat set 438100\n" +
 			"  steamcli library compat set --global \"Proton-GE Latest\"",
-		Args: cobra.RangeArgs(1, 2),
+		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appID, tool := args[0], ""
+			appID, tool := "0", ""
+			if !global && len(args) == 0 {
+				return fmt.Errorf("APPID is required unless --global is used")
+			}
 			if global {
-				appID, tool = "0", args[0]
+				if len(args) > 0 {
+					tool = args[0]
+				}
 				if len(args) == 2 {
 					return fmt.Errorf("--global takes only a tool name")
 				}
-			} else if len(args) == 2 {
-				tool = args[1]
+			} else {
+				appID = args[0]
+				if len(args) == 2 {
+					tool = args[1]
+				}
 			}
 			if err := confirmWrite(cmd, force, "config.vdf"); err != nil {
 				return err
@@ -214,13 +226,14 @@ func launchCommand(o *options) *cobra.Command {
 func launchGetCommand(o *options) *cobra.Command {
 	var roots []string
 	var showSecrets bool
+	var account string
 	c := &cobra.Command{
 		Use:     "get APPID",
 		Aliases: []string{"show"},
 		Short:   "Show the launch options set for an app",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := library.LoadAppConfig(roots, args[0])
+			cfg, err := library.LoadAppConfigForAccount(roots, account, args[0])
 			if err != nil {
 				return err
 			}
@@ -248,6 +261,7 @@ func launchGetCommand(o *options) *cobra.Command {
 		},
 	}
 	rootsFlag(c, &roots)
+	c.Flags().StringVar(&account, "account", "", "Steam account ID whose launch options to read")
 	c.Flags().BoolVar(&showSecrets, "show-secrets", false, "Print credential-like values instead of redacting them")
 	return c
 }
@@ -314,19 +328,18 @@ func dlcListCommand(o *options) *cobra.Command {
 	c := &cobra.Command{
 		Use:     "list APPID",
 		Aliases: []string{"ls"},
-		Short:   "List the DLC installed for a game",
-		Long: "List the DLC installed for a game.\n\n" +
-			"This reads the app manifest, so it shows DLC whose files are on disk. DLC you\n" +
-			"own but have never installed does not appear; use \"steamcli web\" for that.",
+		Short:   "List locally recorded DLC depots and disabled selections",
+		Long: "List locally recorded DLC depots and disabled selections for a game.\n\n" +
+			"This is local metadata, not a complete list of owned DLC.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := library.LoadAppConfig(roots, args[0])
+			cfg, err := library.LoadManifestConfig(roots, args[0])
 			if err != nil {
 				return err
 			}
 			return o.emit(cmd, map[string]any{"appid": cfg.AppID, "name": cfg.Name, "dlc": cfg.DLC}, func(w io.Writer) {
 				if len(cfg.DLC) == 0 {
-					fmt.Fprintf(w, "%s\n", faint(fmt.Sprintf("%s has no installed DLC.", nameOr(cfg))))
+					fmt.Fprintf(w, "%s\n", faint(fmt.Sprintf("%s has no locally recorded DLC.", nameOr(cfg))))
 					return
 				}
 				o.heading(w, "DLC for %s", nameOr(cfg))
@@ -362,7 +375,7 @@ func dlcToggleCommand(o *options, enable bool) *cobra.Command {
 		Long: strings.ToUpper(verb[:1]) + verb[1:] + " one DLC of an installed game.\n\n" +
 			"This writes the manifest's DisabledDLC list, which is where the client records\n" +
 			"an unticked box. Steam re-reads the manifest when it starts, so it must not be\n" +
-			"running. Disabling does not delete the files; it stops the game loading them.",
+			"running. This records a selection; Steam controls downloads and the game controls DLC use.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := confirmWrite(cmd, force, "the app manifest"); err != nil {
@@ -393,7 +406,7 @@ func branchCommand(o *options) *cobra.Command {
 		Aliases: []string{"beta"},
 		Short:   "Inspect and change the beta branch an installed game is on",
 	}
-	c.AddCommand(branchGetCommand(o), branchSetCommand(o))
+	c.AddCommand(branchGetCommand(o), branchSetCommand(o), branchDownloadCommand(o))
 	return c
 }
 
@@ -405,7 +418,7 @@ func branchGetCommand(o *options) *cobra.Command {
 		Short:   "Show the beta branch an installed game is on",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := library.LoadAppConfig(roots, args[0])
+			cfg, err := library.LoadManifestConfig(roots, args[0])
 			if err != nil {
 				return err
 			}
@@ -448,6 +461,8 @@ func branchSetCommand(o *options) *cobra.Command {
 			"its current build until it is updated. To download the branch directly, use\n" +
 			"SteamCMD:\n\n" +
 			"  steamcli cmd run +login USER +app_update APPID -beta BRANCH +quit\n\n" +
+			"For a managed download into the existing game directory, use:\n\n" +
+			"  steamcli library branch download APPID BRANCH --user USER\n\n" +
 			"A branch needing a password can only be set in the client or through SteamCMD's\n" +
 			"-betapassword, which this command does not write.",
 		Args: cobra.RangeArgs(1, 2),
@@ -455,6 +470,9 @@ func branchSetCommand(o *options) *cobra.Command {
 			branch := ""
 			if len(args) == 2 {
 				branch = args[1]
+			}
+			if branch == "public" {
+				branch = ""
 			}
 			if err := confirmWrite(cmd, force, "the app manifest"); err != nil {
 				return err
@@ -492,13 +510,14 @@ func nameOr(cfg library.AppConfig) string {
 func appConfigCommand(o *options) *cobra.Command {
 	var roots []string
 	var showSecrets bool
+	var account string
 	c := &cobra.Command{
 		Use:     "app APPID",
 		Aliases: []string{"properties", "props"},
 		Short:   "Show the local settings of one installed game",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := library.LoadAppConfig(roots, args[0])
+			cfg, err := library.LoadAppConfigForAccount(roots, account, args[0])
 			if err != nil {
 				return err
 			}
@@ -536,6 +555,7 @@ func appConfigCommand(o *options) *cobra.Command {
 		},
 	}
 	rootsFlag(c, &roots)
+	c.Flags().StringVar(&account, "account", "", "Steam account ID whose launch options to read")
 	c.Flags().BoolVar(&showSecrets, "show-secrets", false, "Print credential-like launch option values instead of redacting them")
 	return c
 }
@@ -554,4 +574,65 @@ func dlcSummary(dlc []library.DLC) string {
 		return fmt.Sprintf("%d", len(dlc))
 	}
 	return fmt.Sprintf("%d (%d disabled)", len(dlc), len(dlc)-enabled)
+}
+
+// Reuse the managed SteamCMD download command, including login, bootstrap,
+// success-marker checking, timeout flags and post-download manifest validation.
+func branchDownloadCommand(o *options) *cobra.Command {
+	source := cmdCommand(o)
+	var c *cobra.Command
+	for _, candidate := range source.Commands() {
+		if candidate.Name() == "download" {
+			c = candidate
+			break
+		}
+	}
+	source.RemoveCommand(c)
+	c.Flags().AddFlagSet(source.PersistentFlags())
+	run := c.RunE
+	var roots []string
+	c.Use = "download APPID [BRANCH]"
+	c.Short = "Download a branch into the installed game's directory using SteamCMD"
+	c.Long = "Download a branch with the existing managed SteamCMD workflow. Omit BRANCH for public.\nSteam must be closed. SteamCMD handles account login and Steam Guard.\nThis updates files and verifies SteamCMD's manifest; the desktop client's own manifest\nis not rewritten to claim a completed branch change. Restart Steam to reconcile it."
+	c.Args = cobra.RangeArgs(1, 2)
+	c.Flags().MarkHidden("dir")
+	c.Flags().MarkHidden("beta")
+	rootsFlag(c, &roots)
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("dir") || cmd.Flags().Changed("beta") {
+			return fmt.Errorf("use --root and the BRANCH argument with library branch download")
+		}
+		manifest, err := library.FindManifest(roots, args[0])
+		if err != nil {
+			return err
+		}
+		m, err := steamvdf.Parse(manifest)
+		if err != nil {
+			return err
+		}
+		state := steamvdf.Obj(m, "AppState")
+		dir := steamvdf.Str(steamvdf.Get(state, "installdir"))
+		if dir == "" || filepath.Base(dir) != dir || dir == ".." {
+			return fmt.Errorf("invalid install directory in app manifest")
+		}
+		dir = filepath.Join(filepath.Dir(manifest), "common", dir)
+		branch := "public"
+		if len(args) == 2 {
+			branch = args[1]
+		}
+		dry, _ := cmd.Flags().GetBool("dry-run")
+		if !dry {
+			if err := confirmWrite(cmd, false, "game files"); err != nil {
+				return err
+			}
+		}
+		if err := cmd.Flags().Set("dir", dir); err != nil {
+			return err
+		}
+		if err := cmd.Flags().Set("beta", branch); err != nil {
+			return err
+		}
+		return run(cmd, args[:1])
+	}
+	return c
 }

@@ -231,3 +231,20 @@ func TestQueryManyReportsPerAddress(t *testing.T) {
 		t.Errorf("results are out of order: %+v", res)
 	}
 }
+
+func TestSavePreservesUnknownEntryFields(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "servers.vdf")
+	os.WriteFile(p, []byte(`"Filters" {"favorites" {"1" {"address" "127.0.0.1:27015" "unknown" "preserve me"}} "history" {}}`), 0600)
+	entries, e := Load(p, ListFavorites)
+	if e != nil {
+		t.Fatal(e)
+	}
+	entries[0].Name = "changed"
+	if e = Save(p, ListFavorites, entries); e != nil {
+		t.Fatal(e)
+	}
+	b, _ := os.ReadFile(p)
+	if !strings.Contains(string(b), "preserve me") {
+		t.Fatal("lost unknown entry field")
+	}
+}
