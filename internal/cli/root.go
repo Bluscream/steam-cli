@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -23,6 +24,11 @@ type options struct {
 	configPath, profile, format, color string
 	timeout                            time.Duration
 	offline, allowHTTP, withHeader     bool
+
+	// Settings are resolved once; see settings().
+	settingsOnce   sync.Once
+	cachedSettings config.Settings
+	settingsErr    error
 }
 
 func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
@@ -63,14 +69,25 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 	r.AddCommand(statusCommand(o), workshopCommand(o), webCommand(o), asfCommand(o), clientCommand(o), cmdCommand(o), configCommand(o), doctorCommand(o), libraryCommand(o), idCommand(o), appsCommand(o), searchCommand(o), infoCommand(o))
 	return r
 }
+
+// settings resolves the configuration once per process.
+//
+// Commands such as search and info fan out across goroutines, and every one of
+// them needs the settings. Loading on each call re-read the file and, because
+// a profile with allow_http mutates the shared options struct, raced with the
+// concurrent readers of that field. sync.Once both removes the repeated reads
+// and establishes the happens-before edge the concurrent readers rely on.
 func (o *options) settings() (config.Settings, error) {
-	s, e := config.Load(o.configPath, o.profile)
-	if e == nil && s.AllowHTTP {
-		// A profile may opt its own hosts into plaintext; the flag is still
-		// able to turn it on, never off.
-		o.allowHTTP = true
-	}
-	return s, e
+	o.settingsOnce.Do(func() {
+		s, e := config.Load(o.configPath, o.profile)
+		if e == nil && s.AllowHTTP {
+			// A profile may opt its own hosts into plaintext; the flag is
+			// still able to turn it on, never off.
+			o.allowHTTP = true
+		}
+		o.cachedSettings, o.settingsErr = s, e
+	})
+	return o.cachedSettings, o.settingsErr
 }
 func (o *options) http() *httpx.Client { return httpx.New(o.timeout, o.offline, o.allowHTTP) }
 
