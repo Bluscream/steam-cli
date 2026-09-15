@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"text/tabwriter"
 	"time"
@@ -91,7 +92,7 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 		serverCommand(o),
 	)
 
-	// Top-level aliases for rapid convenience
+	// Top-level direct shortcuts and ergonomic aliases
 	whoamiCmd := &cobra.Command{
 		Use:   "whoami",
 		Short: "Display currently active Steam account (alias for account active)",
@@ -105,7 +106,156 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 			return nil
 		},
 	}
-	r.AddCommand(whoamiCmd)
+
+	nickCmd := &cobra.Command{
+		Use:     "nick NEW_NAME",
+		Aliases: []string{"nickname"},
+		Short:   "Quickly change Steam nickname / persona name (alias for account nick)",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			for _, c := range accCmd.Commands() {
+				if c.Name() == "name" {
+					return c.RunE(cmd, args)
+				}
+			}
+			return nil
+		},
+	}
+
+	runClientCmd := &cobra.Command{
+		Use:   "run APPID",
+		Short: "Launch a game in the desktop Steam client",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client := clientCommand(o)
+			for _, c := range client.Commands() {
+				if c.Name() == "run" {
+					return c.RunE(cmd, args)
+				}
+			}
+			return nil
+		},
+	}
+
+	launchClientCmd := &cobra.Command{
+		Use:     "launch -- [ARGS...]",
+		Aliases: []string{"exec"},
+		Short:   "Pass arguments directly to the Steam client launcher",
+		Args:    cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client := clientCommand(o)
+			for _, c := range client.Commands() {
+				if c.Name() == "launch" {
+					return c.RunE(cmd, args)
+				}
+			}
+			return nil
+		},
+	}
+
+	shutdownClientCmd := &cobra.Command{
+		Use:   "shutdown",
+		Short: "Ask the running desktop Steam client to exit",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client := clientCommand(o)
+			for _, c := range client.Commands() {
+				if c.Name() == "shutdown" {
+					return c.RunE(cmd, args)
+				}
+			}
+			return nil
+		},
+	}
+
+	// Promote top web queries directly to root: friends, bans, owned, recent
+	friendsCmd := &cobra.Command{
+		Use:   "friends [STEAMID]",
+		Short: "Show visible friend list (defaults to logged-in user)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			web := webCommand(o)
+			for _, c := range web.Commands() {
+				if strings.HasPrefix(c.Use, "friends") {
+					return c.RunE(cmd, args)
+				}
+			}
+			return nil
+		},
+	}
+
+	bansCmd := &cobra.Command{
+		Use:   "bans [STEAMID[,STEAMID...]]",
+		Short: "Show public player ban info (defaults to logged-in user)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			web := webCommand(o)
+			for _, c := range web.Commands() {
+				if strings.HasPrefix(c.Use, "bans") {
+					return c.RunE(cmd, args)
+				}
+			}
+			return nil
+		},
+	}
+
+	ownedCmd := &cobra.Command{
+		Use:   "owned [STEAMID]",
+		Short: "Show owned games visible to API key (defaults to logged-in user)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			web := webCommand(o)
+			for _, c := range web.Commands() {
+				if strings.HasPrefix(c.Use, "owned") {
+					return c.RunE(cmd, args)
+				}
+			}
+			return nil
+		},
+	}
+
+	recentCmd := &cobra.Command{
+		Use:   "recent [STEAMID]",
+		Short: "Show recently played games (defaults to logged-in user)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			web := webCommand(o)
+			for _, c := range web.Commands() {
+				if strings.HasPrefix(c.Use, "recent") {
+					return c.RunE(cmd, args)
+				}
+			}
+			return nil
+		},
+	}
+
+	collectionCmd := &cobra.Command{
+		Use:   "collection COLLECTION_ID",
+		Short: "Inspect a Workshop collection and its items",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ws := workshopCommand(o)
+			for _, c := range ws.Commands() {
+				if strings.HasPrefix(c.Use, "collection") {
+					return c.RunE(cmd, args)
+				}
+			}
+			return nil
+		},
+	}
+
+	r.AddCommand(
+		whoamiCmd,
+		nickCmd,
+		runClientCmd,
+		launchClientCmd,
+		shutdownClientCmd,
+		friendsCmd,
+		bansCmd,
+		ownedCmd,
+		recentCmd,
+		collectionCmd,
+	)
 	return r
 }
 

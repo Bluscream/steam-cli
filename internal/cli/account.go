@@ -244,15 +244,27 @@ func accountCommand(o *options) *cobra.Command {
 	editCmd.Flags().StringVarP(&botFlag, "bot", "b", "ASF", "ASF bot name to target if using ASF")
 
 	nameCmd := &cobra.Command{
-		Use:   "name NEW_NAME",
-		Short: "Quickly change your Steam nickname / persona name",
-		Args:  cobra.ExactArgs(1),
+		Use:     "name NEW_NAME",
+		Aliases: []string{"nick", "nickname", "set-name", "set-nick"},
+		Short:   "Quickly change your Steam nickname / persona name",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			nameFlag = args[0]
 			return editCmd.RunE(cmd, nil)
 		},
 	}
 
-	root.AddCommand(listCmd, switchCmd, activeCmd, forgetCmd, editCmd, nameCmd)
+	privacyCmd := &cobra.Command{
+		Use:     "privacy LEVEL",
+		Aliases: []string{"set-privacy"},
+		Short:   "Quickly set profile privacy (Private, FriendsOnly, Public)",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			privacyFlag = args[0]
+			return editCmd.RunE(cmd, nil)
+		},
+	}
+
+	root.AddCommand(listCmd, switchCmd, activeCmd, forgetCmd, editCmd, nameCmd, privacyCmd)
 	return root
 }
