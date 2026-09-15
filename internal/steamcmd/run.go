@@ -94,15 +94,15 @@ func SafeValue(s string) error {
 }
 
 type Download struct {
-	AppID, ItemID, Dir, User, Platform, Branch string
-	Validate                                   bool
+	AppID, ItemID, Dir, User, Password, AuthCode, Platform, Branch string
+	Validate                                                       bool
 }
 
 func (d Download) Args() ([]string, string, error) {
 	if !ValidID(d.AppID) || (d.ItemID != "" && !ValidID(d.ItemID)) {
 		return nil, "", errors.New("app and workshop IDs must be positive decimal integers")
 	}
-	for _, v := range []string{d.Dir, d.User, d.Branch} {
+	for _, v := range []string{d.Dir, d.User, d.Password, d.AuthCode, d.Branch} {
 		if e := SafeValue(v); e != nil {
 			return nil, "", e
 		}
@@ -125,7 +125,14 @@ func (d Download) Args() ([]string, string, error) {
 	if d.Dir != "" {
 		a = append(a, "+force_install_dir", d.Dir)
 	}
-	a = append(a, "+login", d.User)
+	loginArgs := []string{"+login", d.User}
+	if d.Password != "" {
+		loginArgs = append(loginArgs, d.Password)
+		if d.AuthCode != "" {
+			loginArgs = append(loginArgs, d.AuthCode)
+		}
+	}
+	a = append(a, loginArgs...)
 	success := "Success! App '" + d.AppID + "' fully installed."
 	if d.ItemID != "" {
 		a = append(a, "+workshop_download_item", d.AppID, d.ItemID)

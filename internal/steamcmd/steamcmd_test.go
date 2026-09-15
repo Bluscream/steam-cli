@@ -89,6 +89,16 @@ func TestDownloadOrderingAndValidation(t *testing.T) {
 	if _, _, e = d.Args(); e == nil {
 		t.Fatal("newline accepted")
 	}
+
+	dAuth := Download{AppID: "221100", ItemID: "1559212036", User: "alice", Password: "mypassword", AuthCode: "12345"}
+	aAuth, sAuth, eAuth := dAuth.Args()
+	if eAuth != nil {
+		t.Fatal(eAuth)
+	}
+	joinedAuth := strings.Join(aAuth, " ")
+	if !strings.Contains(joinedAuth, "+login alice mypassword 12345") || !strings.Contains(joinedAuth, "+workshop_download_item 221100 1559212036") || sAuth != "Success. Downloaded item 1559212036" {
+		t.Fatalf("unexpected auth download args: %s", joinedAuth)
+	}
 }
 func TestMarkerAcrossWrites(t *testing.T) {
 	var b bytes.Buffer

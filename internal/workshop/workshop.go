@@ -151,8 +151,22 @@ func (c *Client) GetDetails(ctx context.Context, itemIDs []string) (map[string]P
 		}
 
 		body, err := c.Web.Call(ctx, "IPublishedFileService", "GetDetails", 1, "GET", params)
-		if err != nil {
-			return nil, err
+		if err != nil || len(body) == 0 {
+			// Fallback to ISteamRemoteStorage/GetPublishedFileDetails which works without an API key
+			rsParams := url.Values{
+				"itemcount": {strconv.Itoa(len(chunk))},
+			}
+			for idx, id := range chunk {
+				rsParams.Set(fmt.Sprintf("publishedfileids[%d]", idx), id)
+			}
+			rsBody, rsErr := c.Web.Call(ctx, "ISteamRemoteStorage", "GetPublishedFileDetails", 1, "POST", rsParams)
+			if rsErr != nil {
+				if err != nil {
+					return nil, err
+				}
+				return nil, rsErr
+			}
+			body = rsBody
 		}
 
 		var raw struct {
@@ -164,6 +178,7 @@ func (c *Client) GetDetails(ctx context.Context, itemIDs []string) (map[string]P
 					ConsumerAppID   int    `json:"consumer_appid"`
 					Title           string `json:"title"`
 					FileDescription string `json:"file_description"`
+					Description     string `json:"description"`
 					TimeCreated     int64  `json:"time_created"`
 					TimeUpdated     int64  `json:"time_updated"`
 					Visibility      int    `json:"visibility"`
@@ -185,13 +200,17 @@ func (c *Client) GetDetails(ctx context.Context, itemIDs []string) (map[string]P
 		}
 
 		for _, d := range raw.Response.PublishedFileDetails {
+			desc := d.FileDescription
+			if desc == "" {
+				desc = d.Description
+			}
 			item := PublishedFileDetails{
 				PublishedFileID: d.PublishedFileID,
 				Result:          d.Result,
 				Creator:         d.Creator,
 				ConsumerAppID:   d.ConsumerAppID,
 				Title:           d.Title,
-				Description:     d.FileDescription,
+				Description:     desc,
 				TimeCreated:     d.TimeCreated,
 				TimeUpdated:     d.TimeUpdated,
 				Visibility:      d.Visibility,

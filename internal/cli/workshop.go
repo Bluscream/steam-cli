@@ -212,7 +212,7 @@ func workshopCommand(o *options) *cobra.Command {
 	unsub.Flags().BoolVar(&unsubAll, "all", false, "Unsubscribe from every item you are subscribed to for this game")
 
 	// 3. Collection inspection
-	var withItemDetails bool
+	var withItemDetails, idsOnly bool
 	collection := &cobra.Command{
 		Use:   "collection COLLECTION_ID",
 		Short: "Inspect a collection's metadata and child items",
@@ -226,12 +226,19 @@ func workshopCommand(o *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !withItemDetails || len(coll.Children) == 0 {
-				return o.emit(cmd, coll, func(w io.Writer) { o.renderCollection(w, coll, nil) })
-			}
 			childIDs := make([]string, len(coll.Children))
 			for i, ch := range coll.Children {
 				childIDs[i] = ch.PublishedFileID
+			}
+			if idsOnly {
+				return o.emit(cmd, childIDs, func(w io.Writer) {
+					for _, id := range childIDs {
+						fmt.Fprintln(w, id)
+					}
+				})
+			}
+			if !withItemDetails || len(coll.Children) == 0 {
+				return o.emit(cmd, coll, func(w io.Writer) { o.renderCollection(w, coll, nil) })
 			}
 			details, err := wc.GetDetails(cmd.Context(), childIDs)
 			if err != nil {
@@ -242,6 +249,7 @@ func workshopCommand(o *options) *cobra.Command {
 		},
 	}
 	collection.Flags().BoolVar(&withItemDetails, "items", true, "Fetch full metadata for all items in the collection")
+	collection.Flags().BoolVar(&idsOnly, "ids-only", false, "Output only child item IDs, one per line")
 
 	// 4. Subscriptions and favorites, as Steam records them
 	listCmd := func(use, filter, short string, aliases []string) *cobra.Command {

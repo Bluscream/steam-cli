@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -112,6 +113,12 @@ func cmdCommand(o *options) *cobra.Command {
 			} else if !workshop {
 				return errors.New("--dir is required for app downloads")
 			}
+			if d.Password == "" && d.User != "anonymous" {
+				d.Password = os.Getenv("STEAM_PASS")
+			}
+			if d.AuthCode == "" && d.User != "anonymous" {
+				d.AuthCode = os.Getenv("STEAM_AUTH")
+			}
 			a, success, e := d.Args()
 			if e != nil {
 				return e
@@ -130,6 +137,8 @@ func cmdCommand(o *options) *cobra.Command {
 		f := c.Flags()
 		f.StringVar(&d.Dir, "dir", "", "Absolute or relative installation directory")
 		f.StringVar(&d.User, "user", "anonymous", "Steam account name; Valve prompts for password/Steam Guard")
+		f.StringVar(&d.Password, "password", "", "Steam account password (or set STEAM_PASS env var)")
+		f.StringVar(&d.AuthCode, "auth-code", "", "Steam Guard / 2FA code (or set STEAM_AUTH env var)")
 		f.BoolVar(&d.Validate, "validate", false, "Validate downloaded files")
 		f.StringVar(&d.Platform, "platform", "", "Target platform: windows, linux, macos")
 		if !workshop {
