@@ -14,8 +14,11 @@ import (
 
 	"github.com/spf13/cobra"
 	"steamcli.local/steam/internal/asf"
+	"steamcli.local/steam/internal/community"
 	"steamcli.local/steam/internal/config"
 	"steamcli.local/steam/internal/httpx"
+	"steamcli.local/steam/internal/library"
+	"steamcli.local/steam/internal/webapi"
 )
 
 var Version = "0.1.0-dev"
@@ -214,4 +217,53 @@ func humanBytes(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// currentUserID resolves whose profile a command acts on when no SteamID is
+// given: an explicit STEAM_USER_ID, then the SteamID embedded in the Community
+// session cookie, then the account the desktop client last logged in as.
+//
+// Three commands had grown their own copy of this, and one of them had lost the
+// desktop-client fallback, so "search" resolved a different user from "web" and
+// "info" on the same machine.
+func (o *options) currentUserID() (string, error) {
+	if s, err := o.settings(); err == nil {
+		if id, err := s.SteamUserID(); err == nil && id != "" {
+			return id, nil
+		}
+		if cookie, err := s.CommunityLoginSecure(); err == nil && cookie != "" {
+			if id, err := (&community.Client{LoginSecure: cookie}).SteamID(); err == nil && id != "" {
+				return id, nil
+			}
+		}
+	}
+	if id, err := library.LoggedInUser(nil); err == nil && id != "" {
+		return id, nil
+	}
+	return "", errors.New("no SteamID given and no logged-in user could be detected; " +
+		"set STEAM_USER_ID or STEAM_LOGIN_SECURE, or sign in to the desktop Steam client")
+}
+
+// webClient builds a Steam Web API client from the resolved settings. Several
+// commands were assembling this by hand and had drifted apart.
+func (o *options) webClient() (*webapi.Client, config.Settings, error) {
+	s, err := o.settings()
+	if err != nil {
+		return nil, s, err
+	}
+	key, err := s.WebKey()
+	if err != nil {
+		return nil, s, err
+	}
+	token, err := s.AccessToken()
+	if err != nil {
+		return nil, s, err
+	}
+	return &webapi.Client{
+		HTTP:        o.http(),
+		BaseURL:     s.WebURL,
+		Key:         key,
+		CacheDir:    s.CacheDir,
+		AccessToken: token,
+	}, s, nil
 }

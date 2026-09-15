@@ -14,8 +14,6 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
-	"steamcli.local/steam/internal/community"
-	"steamcli.local/steam/internal/library"
 	"steamcli.local/steam/internal/webapi"
 )
 
@@ -119,24 +117,7 @@ func webCommand(o *options) *cobra.Command {
 	call.Flags().StringArrayVarP(&values, "param", "p", nil, "Parameter NAME=VALUE; repeat for arrays, e.g. appids[0]=730")
 	call.Flags().StringVar(&input, "input-json", "", "Service input_json: JSON, @file, or - for stdin")
 	root.AddCommand(methods, call)
-	defaultSteamID := func() (string, error) {
-		s, err := o.settings()
-		if err == nil {
-			if id, err := s.SteamUserID(); err == nil && id != "" {
-				return id, nil
-			}
-			if cLogin, err := s.CommunityLoginSecure(); err == nil && cLogin != "" {
-				client := &community.Client{LoginSecure: cLogin}
-				if id, err := client.SteamID(); err == nil && id != "" {
-					return id, nil
-				}
-			}
-		}
-		if id, err := library.LoggedInUser(nil); err == nil && id != "" {
-			return id, nil
-		}
-		return "", errors.New("no SteamID specified, and unable to detect logged-in user (set STEAM_USER_ID, STEAM_LOGIN_SECURE, or log in to Steam desktop)")
-	}
+	defaultSteamID := o.currentUserID
 
 	type helper struct {
 		name, short, iface, method string

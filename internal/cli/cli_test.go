@@ -1376,3 +1376,40 @@ func TestLibraryCustomRedactsLaunchOptionSecrets(t *testing.T) {
 		t.Errorf("--show-secrets should reveal the value:\n%s", shown)
 	}
 }
+
+// All three commands that fall back to "the logged-in user" must agree. search
+// had lost the desktop-client fallback, so it resolved a different user from
+// web and info on the same machine.
+func TestCurrentUserResolutionPrecedence(t *testing.T) {
+	cleanEnv(t)
+
+	// 1. An explicit STEAM_USER_ID wins.
+	t.Setenv("STEAM_USER_ID", "76561197960287930")
+	o := &options{}
+	id, err := o.currentUserID()
+	if err != nil || id != "76561197960287930" {
+		t.Fatalf("explicit id = %q, %v", id, err)
+	}
+
+	// 2. Otherwise the SteamID in the Community cookie.
+	t.Setenv("STEAM_USER_ID", "")
+	t.Setenv("STEAM_LOGIN_SECURE", "76561198000000001%7C%7Ctoken")
+	o = &options{}
+	id, err = o.currentUserID()
+	if err != nil || id != "76561198000000001" {
+		t.Fatalf("cookie id = %q, %v", id, err)
+	}
+
+	// 3. With neither, the error names both variables and the desktop client.
+	t.Setenv("STEAM_LOGIN_SECURE", "")
+	t.Setenv("HOME", t.TempDir())
+	o = &options{}
+	if _, err = o.currentUserID(); err == nil {
+		t.Fatal("expected an error when nothing identifies a user")
+	}
+	for _, want := range []string{"STEAM_USER_ID", "STEAM_LOGIN_SECURE", "desktop"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q: %v", want, err)
+		}
+	}
+}

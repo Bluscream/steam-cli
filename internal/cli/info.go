@@ -16,7 +16,6 @@ import (
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
 	"steamcli.local/steam/internal/asf"
-	"steamcli.local/steam/internal/community"
 	"steamcli.local/steam/internal/httpx"
 	"steamcli.local/steam/internal/library"
 	"steamcli.local/steam/internal/status"
@@ -157,14 +156,7 @@ func infoCommand(o *options) *cobra.Command {
 				defer wg.Done()
 				userSteamID := ""
 				if hasSettings {
-					if id, err := s.SteamUserID(); err == nil && id != "" {
-						userSteamID = id
-					} else if cLogin, err := s.CommunityLoginSecure(); err == nil && cLogin != "" {
-						userSteamID, _ = (&community.Client{LoginSecure: cLogin}).SteamID()
-					}
-				}
-				if userSteamID == "" {
-					userSteamID, _ = library.LoggedInUser(nil)
+					userSteamID, _ = o.currentUserID()
 				}
 				if userSteamID == "" {
 					return
