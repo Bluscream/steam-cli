@@ -251,3 +251,65 @@ func (c *Client) ListWorkshopFiles(ctx context.Context, appID int, filter string
 	}
 	return out, nil
 }
+
+// ProfileFields contains fields that can be updated on a Steam Community profile.
+type ProfileFields struct {
+	PersonaName string
+	RealName    string
+	Summary     string
+	Country     string
+	State       string
+	City        string
+	CustomURL   string
+}
+
+// EditProfile submits profile updates to the Steam Community edit/process endpoint.
+func (c *Client) EditProfile(ctx context.Context, fields ProfileFields) error {
+	steamID, e := c.SteamID()
+	if e != nil {
+		return e
+	}
+	form := url.Values{
+		"type": {"profileSaveOption"},
+	}
+	if fields.PersonaName != "" {
+		form.Set("personaName", fields.PersonaName)
+	}
+	if fields.RealName != "" {
+		form.Set("real_name", fields.RealName)
+	}
+	if fields.Summary != "" {
+		form.Set("summary", fields.Summary)
+	}
+	if fields.Country != "" {
+		form.Set("country", fields.Country)
+	}
+	if fields.State != "" {
+		form.Set("state", fields.State)
+	}
+	if fields.City != "" {
+		form.Set("city", fields.City)
+	}
+	if fields.CustomURL != "" {
+		form.Set("customURL", fields.CustomURL)
+	}
+
+	return c.post(ctx, "profiles/"+steamID+"/edit/process", form)
+}
+
+// SetPrivacy updates profile privacy settings via ajaxsetprivacy.
+func (c *Client) SetPrivacy(ctx context.Context, privacySettings map[string]int) error {
+	steamID, e := c.SteamID()
+	if e != nil {
+		return e
+	}
+	settingsJSON, err := json.Marshal(privacySettings)
+	if err != nil {
+		return err
+	}
+	form := url.Values{
+		"Privacy": {string(settingsJSON)},
+		"eCommentPermission": {"1"},
+	}
+	return c.post(ctx, "profiles/"+steamID+"/ajaxsetprivacy", form)
+}

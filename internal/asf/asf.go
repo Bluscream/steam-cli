@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
@@ -218,4 +219,86 @@ func Bots(b []byte) ([]BotSummary, bool) {
 		})
 	}
 	return out, true
+}
+
+// SetNickname executes ASF !nickname command.
+func (c *Client) SetNickname(ctx context.Context, bot, name string) (string, error) {
+	if bot == "" {
+		bot = "ASF"
+	}
+	cmd := fmt.Sprintf("nickname %s %s", bot, name)
+	b, err := c.Command(ctx, cmd)
+	if err != nil {
+		return "", err
+	}
+	lines, ok := Parse(b)
+	if ok && len(lines) > 0 {
+		return lines[0].Value, nil
+	}
+	return string(b), nil
+}
+
+// SetPrivacy executes ASF !privacy command.
+func (c *Client) SetPrivacy(ctx context.Context, bot, settings string) (string, error) {
+	if bot == "" {
+		bot = "ASF"
+	}
+	cmd := fmt.Sprintf("privacy %s %s", bot, settings)
+	b, err := c.Command(ctx, cmd)
+	if err != nil {
+		return "", err
+	}
+	lines, ok := Parse(b)
+	if ok && len(lines) > 0 {
+		return lines[0].Value, nil
+	}
+	return string(b), nil
+}
+
+// Play executes ASF !play command to idle games or set custom display game text.
+func (c *Client) Play(ctx context.Context, bot string, appIDs []int, customName string) (string, error) {
+	if bot == "" {
+		bot = "ASF"
+	}
+	var parts []string
+	for _, id := range appIDs {
+		parts = append(parts, fmt.Sprintf("%d", id))
+	}
+	arg := strings.Join(parts, ",")
+	if customName != "" {
+		if arg == "" {
+			arg = "0"
+		}
+		arg = arg + " " + customName
+	}
+	if arg == "" {
+		return "", errors.New("play requires at least one AppID or a custom game name")
+	}
+	cmd := fmt.Sprintf("play %s %s", bot, arg)
+	b, err := c.Command(ctx, cmd)
+	if err != nil {
+		return "", err
+	}
+	lines, ok := Parse(b)
+	if ok && len(lines) > 0 {
+		return lines[0].Value, nil
+	}
+	return string(b), nil
+}
+
+// Resume executes ASF !resume command to return bots to normal farming.
+func (c *Client) Resume(ctx context.Context, bot string) (string, error) {
+	if bot == "" {
+		bot = "ASF"
+	}
+	cmd := fmt.Sprintf("resume %s", bot)
+	b, err := c.Command(ctx, cmd)
+	if err != nil {
+		return "", err
+	}
+	lines, ok := Parse(b)
+	if ok && len(lines) > 0 {
+		return lines[0].Value, nil
+	}
+	return string(b), nil
 }

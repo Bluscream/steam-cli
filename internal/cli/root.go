@@ -69,7 +69,43 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 		}
 		return errors.New("--output must be auto, table, json, compact, raw, short, or csv")
 	}
-	r.AddCommand(sdkCommand(o), statusCommand(o), workshopCommand(o), webCommand(o), asfCommand(o), clientCommand(o), cmdCommand(o), configCommand(o), doctorCommand(o), libraryCommand(o), idCommand(o), appsCommand(o), searchCommand(o), infoCommand(o), serverCommand(o))
+	accCmd := accountCommand(o)
+	idlingCmd := idleCommand(o)
+	r.AddCommand(
+		accCmd,
+		idlingCmd,
+		sdkCommand(o),
+		statusCommand(o),
+		workshopCommand(o),
+		webCommand(o),
+		asfCommand(o),
+		clientCommand(o),
+		cmdCommand(o),
+		configCommand(o),
+		doctorCommand(o),
+		libraryCommand(o),
+		idCommand(o),
+		appsCommand(o),
+		searchCommand(o),
+		infoCommand(o),
+		serverCommand(o),
+	)
+
+	// Top-level aliases for rapid convenience
+	whoamiCmd := &cobra.Command{
+		Use:   "whoami",
+		Short: "Display currently active Steam account (alias for account active)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			for _, c := range accCmd.Commands() {
+				if c.Name() == "active" {
+					return c.RunE(cmd, args)
+				}
+			}
+			return nil
+		},
+	}
+	r.AddCommand(whoamiCmd)
 	return r
 }
 

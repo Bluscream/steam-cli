@@ -1625,3 +1625,38 @@ func TestServerAddressDefaultsToQueryPort(t *testing.T) {
 		t.Errorf("an explicit port should be kept, got %q", got)
 	}
 }
+
+func TestAccountAndIdleCLI(t *testing.T) {
+	cleanEnv(t)
+	// Test account list & whoami
+	out, err := execute(t, "account", "list")
+	if err != nil {
+		t.Fatalf("account list error: %v", err)
+	}
+	if !strings.Contains(out, "PERSONA NAME") || !strings.Contains(out, "ACCOUNT NAME") {
+		t.Errorf("account list output missing headers:\n%s", out)
+	}
+
+	out, err = execute(t, "whoami")
+	if err != nil {
+		t.Fatalf("whoami error: %v", err)
+	}
+	if !strings.Contains(out, "Persona Name") {
+		t.Errorf("whoami output missing Persona Name:\n%s", out)
+	}
+
+	// Test idle help / validation
+	_, err = execute(t, "idle")
+	if err != nil {
+		t.Fatalf("idle without args should show help, got error: %v", err)
+	}
+
+	// Test idle stop
+	out, err = execute(t, "idle", "stop")
+	if err != nil {
+		t.Fatalf("idle stop error: %v", err)
+	}
+	if !strings.Contains(out, "stopped") && !strings.Contains(out, "No active") {
+		t.Errorf("unexpected idle stop output:\n%s", out)
+	}
+}

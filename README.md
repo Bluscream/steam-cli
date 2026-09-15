@@ -9,6 +9,8 @@ A cross-platform Go CLI for Steam Web API, Valve SteamCMD, ArchiSteamFarm IPC, a
 ```text
 steamcli info       one-shot overview: services, your account, client, libraries
 steamcli status     Steam service health, player counts, CMs, game coordinators
+steamcli account    switch Steam accounts, list users, edit nickname/bio/privacy
+steamcli idle       idle games or spoof playing status (ASF + native SDK fallback)
 steamcli search     one query across store, workshop, your library, and players
 steamcli apps       find games by name and resolve them to AppIDs
 steamcli web        API discovery, raw calls, and common player/game queries
@@ -17,8 +19,10 @@ steamcli server     game servers: browse, query, favourites, history, LAN
 steamcli client     drive the desktop Steam client (run, install, steam:// URLs)
 steamcli cmd        automatic SteamCMD bootstrap, execution, app/workshop downloads
 steamcli asf        IPC calls, bot controls, commands, OpenAPI, two-factor tokens
+steamcli sdk        discover and invoke native Steamworks SDK methods (CGO-free)
 steamcli library    local library and installed-app inspection
 steamcli id         offline SteamID64 / Steam2 / Steam3 conversion
+steamcli whoami     show currently active Steam account
 steamcli config     non-secret profiles
 steamcli doctor     local configuration and runtime diagnostics
 steamcli completion bash | zsh | fish | powershell
