@@ -16,18 +16,19 @@ import (
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
 	"steamcli.local/steam/internal/community"
+	"steamcli.local/steam/internal/httpx"
 	"steamcli.local/steam/internal/library"
 	"steamcli.local/steam/internal/webapi"
 )
 
 // StoreAppItem represents an app returned by the Steam Store search API.
 type StoreAppItem struct {
-	ID        int               `json:"id"`
-	Type      string            `json:"type"`
-	Name      string            `json:"name"`
-	Metascore string            `json:"metascore,omitempty"`
-	Platforms map[string]bool   `json:"platforms,omitempty"`
-	Price     map[string]any    `json:"price,omitempty"`
+	ID        int             `json:"id"`
+	Type      string          `json:"type"`
+	Name      string          `json:"name"`
+	Metascore string          `json:"metascore,omitempty"`
+	Platforms map[string]bool `json:"platforms,omitempty"`
+	Price     map[string]any  `json:"price,omitempty"`
 }
 
 // StoreSearchResult represents the envelope returned by https://store.steampowered.com/api/storesearch/
@@ -41,7 +42,14 @@ func (o *options) searchStoreApps(ctx context.Context, query string) ([]StoreApp
 	if strings.TrimSpace(query) == "" {
 		return nil, errors.New("search query cannot be empty")
 	}
-	endpoint := "https://store.steampowered.com/api/storesearch/"
+	base := "https://store.steampowered.com"
+	if s, err := o.settings(); err == nil && s.StoreURL != "" {
+		base = s.StoreURL
+	}
+	endpoint, err := httpx.Endpoint(base, "api/storesearch/", o.allowHTTP)
+	if err != nil {
+		return nil, err
+	}
 	params := url.Values{
 		"term": {query},
 		"l":    {"english"},
@@ -157,12 +165,12 @@ func appsCommand(o *options) *cobra.Command {
 
 // GlobalSearchResults holds results from all categories for the global search command.
 type GlobalSearchResults struct {
-	Query         string                  `json:"query"`
-	StoreApps     []StoreAppItem          `json:"store_apps,omitempty"`
-	LocalApps     []library.App           `json:"local_apps,omitempty"`
-	OwnedGames    []ownedGame             `json:"owned_games,omitempty"`
-	Players       []playerSummary         `json:"players,omitempty"`
-	WorkshopItems []searchWorkshopItem    `json:"workshop_items,omitempty"`
+	Query         string               `json:"query"`
+	StoreApps     []StoreAppItem       `json:"store_apps,omitempty"`
+	LocalApps     []library.App        `json:"local_apps,omitempty"`
+	OwnedGames    []ownedGame          `json:"owned_games,omitempty"`
+	Players       []playerSummary      `json:"players,omitempty"`
+	WorkshopItems []searchWorkshopItem `json:"workshop_items,omitempty"`
 }
 
 type searchWorkshopItem struct {
@@ -369,8 +377,8 @@ func searchCommand(o *options) *cobra.Command {
 				token, _ := s.AccessToken()
 				wc := &webapi.Client{HTTP: o.http(), BaseURL: s.WebURL, Key: key, CacheDir: s.CacheDir, AccessToken: token}
 				params := url.Values{
-					"steamid":                  {userSteamID},
-					"include_appinfo":          {"1"},
+					"steamid":                   {userSteamID},
+					"include_appinfo":           {"1"},
 					"include_played_free_games": {"1"},
 				}
 				b, err := wc.Call(ctx, "IPlayerService", "GetOwnedGames", 1, "GET", params)

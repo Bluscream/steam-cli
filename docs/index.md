@@ -42,7 +42,7 @@ steamcli workshop search 4000 "map"       # Workshop search, cursor-paged
 steamcli workshop subs 4000               # your subscriptions
 steamcli --offline library                # local installs, no network
 steamcli cmd download 1007 --dir ./game   # SteamCMD, bootstrapped automatically
-steamcli asf 2fa --output parsed          # ArchiSteamFarm two-factor codes
+steamcli asf 2fa --output short           # ArchiSteamFarm two-factor codes
 steamcli client run 730                   # hand off to the desktop client
 ```
 

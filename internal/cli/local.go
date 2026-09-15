@@ -18,6 +18,7 @@ import (
 func libraryCommand(o *options) *cobra.Command {
 	var roots []string
 	var customOnly bool
+	var showSecrets bool
 	var sortField string
 	c := &cobra.Command{Use: "library", Short: "Inspect installed games and Steam library folders offline", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		r := roots
@@ -75,6 +76,16 @@ func libraryCommand(o *options) *cobra.Command {
 			return fmt.Errorf("invalid --sort value %q: expected appid, name, size, or library", sortField)
 		}
 
+		if !showSecrets {
+			// Redact in the data as well as the table: -o json is the form most
+			// likely to be piped into a file or an issue.
+			redacted := make([]library.App, len(apps))
+			copy(redacted, apps)
+			for i := range redacted {
+				redacted[i].LaunchOptions = library.RedactLaunchOptions(redacted[i].LaunchOptions)
+			}
+			apps = redacted
+		}
 		return o.emit(cmd, apps, func(w io.Writer) {
 			t := o.newTable(w)
 			if customOnly {
@@ -85,6 +96,9 @@ func libraryCommand(o *options) *cobra.Command {
 						ct = "-"
 					}
 					lo := a.LaunchOptions
+					if !showSecrets {
+						lo = library.RedactLaunchOptions(lo)
+					}
 					if lo == "" {
 						lo = "-"
 					}
@@ -120,6 +134,7 @@ func libraryCommand(o *options) *cobra.Command {
 	c.Flags().StringArrayVar(&roots, "root", nil, "Steam root directory; repeat for multiple installations")
 	c.Flags().BoolVar(&customOnly, "custom", false, "Only list games with custom compatibility tools or launch options set")
 	c.Flags().StringVar(&sortField, "sort", "", "Sort apps by: appid, name, size, library")
+	c.Flags().BoolVar(&showSecrets, "show-secrets", false, "Print credential-like launch option values instead of redacting them")
 
 	customSub := &cobra.Command{
 		Use:     "custom",
@@ -133,6 +148,7 @@ func libraryCommand(o *options) *cobra.Command {
 	}
 	customSub.Flags().StringArrayVar(&roots, "root", nil, "Steam root directory; repeat for multiple installations")
 	customSub.Flags().StringVar(&sortField, "sort", "", "Sort apps by: appid, name, size, library")
+	customSub.Flags().BoolVar(&showSecrets, "show-secrets", false, "Print credential-like launch option values instead of redacting them")
 	c.AddCommand(customSub)
 	return c
 }

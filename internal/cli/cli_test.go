@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1096,10 +1097,29 @@ func TestWebAchievementsDefaultsToUserWhenOneArg(t *testing.T) {
 	}
 }
 
+// storeFixture serves the Steam Store search endpoint so app-name resolution
+// can be tested without reaching the real store.
+func storeFixture(t *testing.T, items string) *httptest.Server {
+	t.Helper()
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "storesearch") {
+			w.WriteHeader(404)
+			return
+		}
+		fmt.Fprintf(w, `{"total":1,"items":[%s]}`, items)
+	}))
+	t.Setenv("STEAM_STORE_URL", s.URL)
+	return s
+}
+
+const vrchatItem = `{"id":438100,"type":"app","name":"VRChat"}`
+
 func TestAppsCommand(t *testing.T) {
 	cleanEnv(t)
-	// Execute apps command for a known query
-	out, err := execute(t, "apps", "vrchat")
+	store := storeFixture(t, vrchatItem)
+	defer store.Close()
+
+	out, err := execute(t, "--allow-http", "apps", "vrchat")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1110,6 +1130,8 @@ func TestAppsCommand(t *testing.T) {
 
 func TestWebNewsResolvesAppName(t *testing.T) {
 	cleanEnv(t)
+	store := storeFixture(t, vrchatItem)
+	defer store.Close()
 	var gotAppID string
 	webServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAppID = r.URL.Query().Get("appid")
@@ -1119,7 +1141,7 @@ func TestWebNewsResolvesAppName(t *testing.T) {
 
 	var outBuf, errBuf bytes.Buffer
 	c := New(strings.NewReader(""), &outBuf, &errBuf)
-	c.SetArgs([]string{"web", "--url", webServer.URL, "news", "vrchat"})
+	c.SetArgs([]string{"--allow-http", "web", "--url", webServer.URL, "news", "vrchat"})
 	if err := c.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1136,15 +1158,19 @@ func TestWebNewsResolvesAppName(t *testing.T) {
 
 func TestGlobalSearchCommand(t *testing.T) {
 	cleanEnv(t)
-	out, err := execute(t, "search", "vrchat")
+	store := storeFixture(t, vrchatItem)
+	defer store.Close()
+	// The local-library section still reflects this machine, so the assertions
+	// below deliberately cover only the store category, which is fixtured.
+	out, err := execute(t, "--allow-http", "search", "vrchat")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(strings.ToLower(out), "vrchat") {
 		t.Errorf("expected search output to contain 'vrchat', got:\n%s", out)
 	}
-	if !strings.Contains(out, "Steam Store Apps") && !strings.Contains(out, "Workshop Items") {
-		t.Errorf("expected category table header, got:\n%s", out)
+	if !strings.Contains(out, "Steam Store Apps") {
+		t.Errorf("expected the store category to be rendered, got:\n%s", out)
 	}
 }
 
@@ -1237,5 +1263,116 @@ func TestLibrarySort(t *testing.T) {
 	}
 }
 
+// --- regressions found auditing the 0.8.0 work ------------------------------
 
+// "parsed" was renamed to "short"; the old name stays accepted so documented
+// examples and anything already scripted keep working.
+func TestParsedIsAcceptedAsAliasForShort(t *testing.T) {
+	cleanEnv(t)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"Result":{"A":{"Result":"JKWGP"}},"Success":true}`))
+	}))
+	defer ts.Close()
 
+	for _, format := range []string{"short", "parsed"} {
+		out, err := execute(t, "--output", format, "asf", "--url", ts.URL, "token", "A")
+		if err != nil {
+			t.Fatalf("%s: %v", format, err)
+		}
+		if strings.TrimSpace(out) != "JKWGP" {
+			t.Errorf("--output %s produced %q", format, out)
+		}
+	}
+}
+
+// STEAM_WEB_API_KEY was the documented primary before the rename to
+// STEAM_API_KEY, so an environment setting only the old name must still work.
+func TestLegacyWebAPIKeyEnvIsStillRead(t *testing.T) {
+	cleanEnv(t)
+	t.Setenv("STEAM_API_KEY", "")
+	t.Setenv("STEAM_WEB_API_KEY", "legacy-key")
+
+	out, err := execute(t, "-o", "json", "doctor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d map[string]any
+	if e := json.Unmarshal([]byte(out), &d); e != nil {
+		t.Fatalf("doctor output is not JSON: %v", e)
+	}
+	if d["web_key_present"] != true {
+		t.Errorf("STEAM_WEB_API_KEY should still resolve a key:\n%s", out)
+	}
+	// And the credential itself must never be echoed.
+	if strings.Contains(out, "legacy-key") {
+		t.Errorf("doctor leaked the key:\n%s", out)
+	}
+}
+
+// info must say when a section could not be fetched, rather than omitting it.
+func TestInfoReportsSectionFailures(t *testing.T) {
+	cleanEnv(t)
+	t.Setenv("STEAM_WEB_URL", "http://127.0.0.1:9")
+
+	out, err := execute(t, "--allow-http", "-o", "json", "--timeout", "2s", "info")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d struct {
+		Problems []string `json:"problems"`
+	}
+	if e := json.Unmarshal([]byte(out), &d); e != nil {
+		t.Fatalf("info output is not JSON: %v\n%s", e, out)
+	}
+	if len(d.Problems) == 0 {
+		t.Errorf("an unreachable Web API should be reported, got:\n%s", out)
+	}
+}
+
+// Launch options can carry credentials and must not be printed by default.
+func TestLibraryCustomRedactsLaunchOptionSecrets(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	steamapps := filepath.Join(root, "steamapps")
+	if err := os.MkdirAll(steamapps, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(steamapps, "libraryfolders.vdf"),
+		[]byte("\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\""+root+"\"\n\t}\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(steamapps, "appmanifest_1.acf"),
+		[]byte("\"AppState\"\n{\n\t\"appid\"\t\t\"1\"\n\t\"name\"\t\t\"Test\"\n\t\"installdir\"\t\t\"Test\"\n\t\"StateFlags\"\t\t\"4\"\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(root, "userdata", "1", "config")
+	if err := os.MkdirAll(cfg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	local := "\"UserLocalConfigStore\"\n{\n\t\"Software\"\n\t{\n\t\t\"Valve\"\n\t\t{\n\t\t\t\"Steam\"\n\t\t\t{\n\t\t\t\t\"apps\"\n\t\t\t\t{\n\t\t\t\t\t\"1\"\n\t\t\t\t\t{\n\t\t\t\t\t\t\"LaunchOptions\"\t\t\"-novid -rcon_password hunter2000\"\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n"
+	if err := os.WriteFile(filepath.Join(cfg, "localconfig.vdf"), []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := execute(t, "--offline", "-o", "json", "library", "custom", "--root", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "hunter2000") {
+		t.Errorf("a credential in launch options leaked:\n%s", out)
+	}
+	if !strings.Contains(out, "redacted") {
+		t.Errorf("expected a redaction marker:\n%s", out)
+	}
+	if !strings.Contains(out, "-novid") {
+		t.Errorf("ordinary options should survive:\n%s", out)
+	}
+
+	shown, err := execute(t, "--offline", "-o", "json", "library", "custom", "--root", root, "--show-secrets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(shown, "hunter2000") {
+		t.Errorf("--show-secrets should reveal the value:\n%s", shown)
+	}
+}

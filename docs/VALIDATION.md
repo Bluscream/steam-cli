@@ -127,3 +127,37 @@ there and the pre-existing behaviour is preserved.
 
 **This is a breaking change for scripts** that parsed the previous JSON default;
 `-o json` restores it. Tests that parse output were updated to request it explicitly.
+
+---
+
+## Addendum, 2026-09-15: audit of the 0.8.0 work
+
+Reviewed 18 commits adding `info`, `apps`, `search`, `library custom`/`--sort`,
+styled tables with colour, CSV output, and logged-in-user auto-detection.
+Build, `go vet` and the suite passed on arrival; the following were corrected.
+
+- **`--output parsed` had been removed** in favour of `short`, while the README,
+  `docs/index.md` and the published v0.7.1 release notes still instructed its use;
+  every documented example errored. `parsed` is now accepted as a deprecated alias
+  and the docs name `short`.
+- **`STEAM_WEB_API_KEY` had stopped being read** when the default variable became
+  `STEAM_API_KEY`. It was the documented primary since the first release, so it is
+  restored as a fallback; an environment setting only the old name works again.
+- **Three tests required live internet**, and one also read the developer's real
+  Steam library, contradicting this document's claim that the suite runs without
+  external API access. The store search endpoint is now configurable
+  (`store_url` / `STEAM_STORE_URL`, matching `web_url` and `community_url`), the
+  tests use fixtures, and the whole suite passes with the network blocked.
+- **`steamcli info` discarded every failure silently**: all three error paths
+  returned without recording anything, and the `Error` fields on its structs were
+  never populated, so an unreachable API produced a section that simply vanished.
+  Failures are now collected into `problems` and shown as notes. ASF stays quiet
+  when none is configured, since it is optional.
+- **Launch options were printed verbatim.** They routinely carry RCON passwords
+  and API tokens; values matching credential patterns are now redacted in both
+  the table and `-o json`, with `--show-secrets` to override.
+- Three files were not `gofmt`-clean.
+
+Coverage moved 71.9% → 69.2% with 2,695 lines added; `internal/library` fell to
+47% and gained tests only for the redaction added here. Raising coverage on the
+new `info`, `apps` and `search` code remains outstanding.

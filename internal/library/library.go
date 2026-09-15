@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -286,3 +287,32 @@ func ScanLaunchOptions(roots []string) map[string]string {
 	}
 	return out
 }
+
+// secretish matches the option names that conventionally carry a credential.
+// Launch options are free-form, so this is a heuristic on the text: Steam has
+// no notion of a secret here.
+var launchSecret = regexp.MustCompile(`(?i)(-{1,2}[\w-]*(?:password|passwd|token|secret|apikey|api[-_]key|auth)[\w-]*[= ]\s*)(\S+)`)
+
+// credentialURL matches a URL carrying inline credentials or a secret query
+// parameter, which launch options occasionally embed.
+var credentialURL = regexp.MustCompile(`(?i)([a-z]+://[^\s]*?)((?:password|token|secret|key|auth)=)([^\s&]+)`)
+
+// RedactLaunchOptions hides values that look like credentials while leaving the
+// rest of the option string readable. Launch options are shown in listings that
+// get pasted into issues and chat logs.
+func RedactLaunchOptions(s string) string {
+	if s == "" {
+		return s
+	}
+	out := launchSecret.ReplaceAllString(s, "${1}<redacted>")
+	out = credentialURL.ReplaceAllString(out, "${1}${2}<redacted>")
+	// Inline userinfo, e.g. https://user:pass@host
+	out = inlineUserinfo.ReplaceAllString(out, "${1}:<redacted>@")
+	return out
+}
+
+var inlineUserinfo = regexp.MustCompile(`([a-z]+://[^\s:/@]+):[^\s@]+@`)
+
+// LaunchOptionsLookRisky reports whether redaction changed anything, so a
+// caller can mention that values were hidden.
+func LaunchOptionsLookRisky(s string) bool { return RedactLaunchOptions(s) != s }

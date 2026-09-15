@@ -20,6 +20,7 @@ type Profile struct {
 	WebKeyEnv                string `json:"web_key_env,omitempty"`
 	WebKeyFile               string `json:"web_key_file,omitempty"`
 	CommunityURL             string `json:"community_url,omitempty"`
+	StoreURL                 string `json:"store_url,omitempty"`
 	CommunityLoginSecureEnv  string `json:"community_login_secure_env,omitempty"`
 	CommunityLoginSecureFile string `json:"community_login_secure_file,omitempty"`
 	SteamUserIDEnv           string `json:"steam_user_id_env,omitempty"`
@@ -108,6 +109,9 @@ func Load(path, name string) (Settings, error) {
 	if p.CommunityURL == "" {
 		p.CommunityURL = "https://steamcommunity.com"
 	}
+	if p.StoreURL == "" {
+		p.StoreURL = "https://store.steampowered.com"
+	}
 	if p.AccessTokenEnv == "" {
 		p.AccessTokenEnv = "STEAM_ACCESS_TOKEN"
 	}
@@ -126,7 +130,7 @@ func Load(path, name string) (Settings, error) {
 	for _, v := range []struct {
 		env string
 		dst *string
-	}{{"STEAM_WEB_URL", &p.WebURL}, {"STEAM_COMMUNITY_URL", &p.CommunityURL}, {"STEAM_ASF_URL", &p.ASFURL}, {"STEAMCMD_PATH", &p.SteamCMDPath}, {"STEAM_CLIENT_PATH", &p.SteamClientPath}, {"STEAM_CLI_DATA_DIR", &d}, {"STEAM_CLI_CACHE_DIR", &k}} {
+	}{{"STEAM_WEB_URL", &p.WebURL}, {"STEAM_COMMUNITY_URL", &p.CommunityURL}, {"STEAM_STORE_URL", &p.StoreURL}, {"STEAM_ASF_URL", &p.ASFURL}, {"STEAMCMD_PATH", &p.SteamCMDPath}, {"STEAM_CLIENT_PATH", &p.SteamClientPath}, {"STEAM_CLI_DATA_DIR", &d}, {"STEAM_CLI_CACHE_DIR", &k}} {
 		if s := os.Getenv(v.env); s != "" {
 			*v.dst = s
 		}
@@ -134,7 +138,7 @@ func Load(path, name string) (Settings, error) {
 	if v, ok := os.LookupEnv("STEAM_CLIENT_ARGS"); ok {
 		p.SteamClientArgs = strings.Fields(v)
 	}
-	for _, raw := range []string{p.WebURL, p.ASFURL, p.CommunityURL} {
+	for _, raw := range []string{p.WebURL, p.ASFURL, p.CommunityURL, p.StoreURL} {
 		u, e := url.Parse(raw)
 		if e != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https") {
 			return Settings{}, errors.New("configured URLs must be HTTP(S) URLs without credentials, query, or fragment")
@@ -176,6 +180,11 @@ func Secret(env, file string, aliases ...string) (string, error) {
 	return strings.TrimRight(string(b), "\r\n"), nil
 }
 func (s Settings) WebKey() (string, error) {
+	// STEAM_WEB_API_KEY was the documented primary before 0.8.0. It stays a
+	// fallback so an existing environment keeps working after the rename.
+	if s.WebKeyEnv == "STEAM_API_KEY" {
+		return Secret(s.WebKeyEnv, s.WebKeyFile, "STEAM_WEB_API_KEY")
+	}
 	return Secret(s.WebKeyEnv, s.WebKeyFile)
 }
 func (s Settings) ASFPassword() (string, error) { return Secret(s.ASFPasswordEnv, s.ASFPasswordFile) }
@@ -190,7 +199,7 @@ func Init(path string) error {
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
-	return enc.Encode(File{DefaultProfile: "default", Profiles: map[string]Profile{"default": {WebURL: "https://api.steampowered.com", CommunityURL: "https://steamcommunity.com", ASFURL: "http://127.0.0.1:1242", WebKeyEnv: "STEAM_API_KEY", AccessTokenEnv: "STEAM_ACCESS_TOKEN", CommunityLoginSecureEnv: "STEAM_LOGIN_SECURE", SteamUserIDEnv: "STEAM_USER_ID", ASFPasswordEnv: "ASF_IPC_PASSWORD"}}})
+	return enc.Encode(File{DefaultProfile: "default", Profiles: map[string]Profile{"default": {WebURL: "https://api.steampowered.com", CommunityURL: "https://steamcommunity.com", StoreURL: "https://store.steampowered.com", ASFURL: "http://127.0.0.1:1242", WebKeyEnv: "STEAM_API_KEY", AccessTokenEnv: "STEAM_ACCESS_TOKEN", CommunityLoginSecureEnv: "STEAM_LOGIN_SECURE", SteamUserIDEnv: "STEAM_USER_ID", ASFPasswordEnv: "ASF_IPC_PASSWORD"}}})
 }
 
 func (s Settings) AccessToken() (string, error) {

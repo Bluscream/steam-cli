@@ -50,6 +50,11 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 			return errors.New("--color must be auto, always, or never")
 		}
 		switch o.format {
+		case "parsed":
+			// Renamed to "short" in 0.8.0. Kept working so documented examples
+			// and anything already scripted do not break.
+			o.format = "short"
+			return nil
 		case "auto", "table", "json", "compact", "raw", "short", "csv":
 			return nil
 		}

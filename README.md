@@ -69,7 +69,8 @@ The CLI reads existing environment variables. It does not load `.env` files auto
 
 | Variable | Purpose |
 | --- | --- |
-| `STEAM_API_KEY` | Steam Web API key |
+| `STEAM_API_KEY` | Steam Web API key (`STEAM_WEB_API_KEY` is still read as a fallback) |
+| `STEAM_STORE_URL` | Store base URL override, used by app-name resolution |
 | `STEAM_USER_ID` | Default user SteamID64 for profile/player commands |
 | `STEAM_ACCESS_TOKEN` | Web API access token for methods a key cannot authorize |
 | `STEAM_LOGIN_SECURE` | Community session cookie; required for collection membership, subscriptions, and favorites |
@@ -291,8 +292,8 @@ With `STEAM_ASF_URL` and `ASF_IPC_PASSWORD` configured:
 ```sh
 ./bin/steamcli asf status
 ./bin/steamcli asf bots --bots Alpha,Beta
-./bin/steamcli asf token gabeN --output parsed   # aliases: 2fa, auth
-./bin/steamcli asf token --bots Alpha,Beta --output parsed
+./bin/steamcli asf token gabeN --output short   # aliases: 2fa, auth
+./bin/steamcli asf token --bots Alpha,Beta --output short
 ./bin/steamcli asf pause --bots Alpha --resume-in 600
 ./bin/steamcli asf bots
 ./bin/steamcli asf bots MyBot
@@ -335,13 +336,21 @@ Commands that act on bots take a selector: a positional argument, the persistent
 ./bin/steamcli completion bash > steam-completion.bash
 ```
 
+`library custom` lists games with a non-default compatibility tool or custom launch options. **Launch-option values that look like credentials are redacted** — `-password`, `-rcon_password`, `--token`, `--api-key`, a URL query secret, or inline `user:pass@` userinfo — in both the table and `-o json`, because these listings get pasted into issues and chat logs. `--show-secrets` prints them. Ordinary options are never altered.
+
 Library discovery checks common Windows/macOS/Linux locations and Linux Flatpak. `--root` handles nonstandard/custom installations. Both legacy and modern `libraryfolders.vdf` layouts are supported. Malformed manifests produce warnings in the JSON report; their contents are never executed. Library results describe local manifest state, not proof of an account license or cloud availability.
 
-**`auto` is the default**: each command prints the clearest form it has — a table, a report, or a reduced ASF value — and falls back to indented JSON when it has no renderer. `table` forces that rendering, `json` and `compact` produce data for scripts, `raw` preserves response bytes from the API, and `parsed` always reduces ASF envelopes. `-o` is the shorthand.
+**`auto` is the default**: each command prints the clearest form it has — a table, a report, or a reduced ASF value — and falls back to indented JSON when it has no renderer. `table` forces that rendering, `json` and `compact` produce data for scripts, `raw` preserves response bytes from the API, `short` always reduces ASF envelopes to the value behind them, and `csv` emits machine-readable rows (`--with-header` controls the header line). `-o` is the shorthand, and `--color auto|always|never` governs ANSI output.
 
 `auto` reduces an ASF envelope only when it carries an *outcome*. A two-factor token prints as the bare code; a bot listing or `asf status` carries data rather than a result, so it is rendered as a table or printed whole rather than flattened to its envelope message.
 
-Before 0.7.0 the default was `json`. Scripts that parsed stdout should pass `-o json` explicitly. `parsed` reduces an ASF response to the value behind it, so `asf token gabeN --output parsed` prints `JKWGP` and nothing else. ASF nests its payload differently per endpoint: a token arrives as `Result[bot].Result`, an executed command as a bare `Result` string, and a refused operation explains itself in `Result[bot].Message` or the envelope's `Message`. `parsed` walks that order and prints the first value it finds, prefixing each line with the bot name when more than one bot answered. A `Success:false` response still exits nonzero while showing its reason. Payloads that are not ASF envelopes are printed as JSON, so `parsed` is safe to set globally. HTTP errors omit response bodies/credential-bearing URLs. There are no hidden browser sessions, analytics, cookie jars, response logs, or background update checks. Normal HTTP proxy environment settings are honored by Go. Read-only HTTP retries are limited to two for 429/502/503/504, honor bounded `Retry-After`, and never retry authentication failures. Redirects are not followed, preventing credentials from being forwarded.
+Before 0.7.0 the default was `json`. Scripts that parsed stdout should pass `-o json` explicitly.
+
+`short` reduces an ASF response to the value behind it, so `asf token gabeN --output short` prints `JKWGP` and nothing else. ASF nests its payload differently per endpoint: a token arrives as `Result[bot].Result`, an executed command as a bare `Result` string, and a refused operation explains itself in `Result[bot].Message` or the envelope's `Message`. `short` walks that order and prints the first value it finds, prefixing each line with the bot name when more than one bot answered. A payload carrying *data* rather than an outcome — a bot listing, `asf status` — is printed whole instead of being flattened. A `Success:false` response still exits nonzero while showing its reason.
+
+`--output parsed` is accepted as a deprecated alias for `short`, which it was called before 0.8.0.
+
+HTTP errors omit response bodies and credential-bearing URLs. There are no hidden browser sessions, analytics, cookie jars, response logs, or background update checks. Normal HTTP proxy environment settings are honored by Go. Read-only HTTP retries are limited to two for 429/502/503/504, honor bounded `Retry-After`, and never retry authentication failures. Redirects are not followed, preventing credentials from being forwarded.
 
 Exit codes: `0` success, `1` CLI/HTTP/application/verification failure, `130` interrupted; SteamCMD's positive nonzero process exit codes pass through. SteamCMD output remains its native terminal output regardless of `--output`.
 

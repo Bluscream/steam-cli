@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -42,10 +43,10 @@ type asfInfoData struct {
 }
 
 type libraryFolderInfo struct {
-	Path       string `json:"path"`
-	AppsCount  int    `json:"apps_count"`
-	SizeBytes  int64  `json:"size_bytes"`
-	SizeHuman  string `json:"size_human"`
+	Path      string `json:"path"`
+	AppsCount int    `json:"apps_count"`
+	SizeBytes int64  `json:"size_bytes"`
+	SizeHuman string `json:"size_human"`
 }
 
 type clientInfoData struct {
@@ -61,11 +62,14 @@ type clientInfoData struct {
 }
 
 type aggregatedInfo struct {
-	Server       *serverInfoData        `json:"server,omitempty"`
+	Server       *serverInfoData         `json:"server,omitempty"`
 	CoreServices []status.EndpointStatus `json:"core_services,omitempty"`
-	User         *playerSummary         `json:"user,omitempty"`
-	ASF          *asfInfoData           `json:"asf,omitempty"`
-	Client       *clientInfoData        `json:"client,omitempty"`
+	User         *playerSummary          `json:"user,omitempty"`
+	ASF          *asfInfoData            `json:"asf,omitempty"`
+	Client       *clientInfoData         `json:"client,omitempty"`
+	// Problems names sections that could not be fetched, so a missing section
+	// is distinguishable from an empty one.
+	Problems []string `json:"problems,omitempty"`
 }
 
 func infoCommand(o *options) *cobra.Command {
@@ -82,6 +86,17 @@ func infoCommand(o *options) *cobra.Command {
 			s, err := o.settings()
 			hasSettings := err == nil
 
+			// Each section runs concurrently and may fail on its own. Failures
+			// are collected and reported rather than dropped: a section that
+			// silently vanishes reads as "nothing to show" when it actually
+			// means "this could not be fetched".
+			var problems []string
+			note := func(section string, err error) {
+				mu.Lock()
+				problems = append(problems, section+": "+err.Error())
+				mu.Unlock()
+			}
+
 			// 1. Steam Server Info (ISteamWebAPIUtil/GetServerInfo/v1/)
 			wg.Add(1)
 			go func() {
@@ -92,10 +107,12 @@ func infoCommand(o *options) *cobra.Command {
 				}
 				endpoint, err := httpx.Endpoint(baseURL, "ISteamWebAPIUtil/GetServerInfo/v1/", o.allowHTTP)
 				if err != nil {
+					note("Steam server info", err)
 					return
 				}
 				b, err := o.http().Do(ctx, http.MethodGet, endpoint, nil, nil, nil)
 				if err != nil {
+					note("Steam server info", err)
 					return
 				}
 				var res struct {
@@ -124,6 +141,9 @@ func infoCommand(o *options) *cobra.Command {
 					CommunityURL: s.CommunityURL,
 				}
 				eps, err := mon.CheckCoreServices(ctx)
+				if err != nil {
+					note("Core services", err)
+				}
 				if err == nil {
 					mu.Lock()
 					info.CoreServices = eps
@@ -203,6 +223,11 @@ func infoCommand(o *options) *cobra.Command {
 				}
 				b, err := asfClient.Call(ctx, "GET", "Api/ASF", nil, nil)
 				if err != nil {
+					// ASF is optional. Only report a failure when one is
+					// actually configured, so an absent instance stays quiet.
+					if pwd != "" {
+						note("ArchiSteamFarm", err)
+					}
 					return
 				}
 				var env struct {
@@ -290,10 +315,10 @@ func infoCommand(o *options) *cobra.Command {
 					for _, lib := range rep.Libraries {
 						sz := libSize[lib]
 						libFolders = append(libFolders, libraryFolderInfo{
-							Path:       lib,
-							AppsCount:  libApps[lib],
-							SizeBytes:  sz,
-							SizeHuman:  humanBytes(sz),
+							Path:      lib,
+							AppsCount: libApps[lib],
+							SizeBytes: sz,
+							SizeHuman: humanBytes(sz),
 						})
 					}
 					clientData.Libraries = libFolders
@@ -307,6 +332,8 @@ func infoCommand(o *options) *cobra.Command {
 			}()
 
 			wg.Wait()
+			sort.Strings(problems)
+			info.Problems = problems
 
 			return o.emit(cmd, info, func(w io.Writer) {
 				// 1. Steam Server Info
@@ -423,6 +450,10 @@ func infoCommand(o *options) *cobra.Command {
 					)
 					detailRows(t, rows...)
 					o.renderTable(t)
+				}
+
+				for _, p := range problems {
+					fmt.Fprintf(w, "%s %s\n", yellow.Sprint("Note:"), p)
 				}
 			})
 		},
