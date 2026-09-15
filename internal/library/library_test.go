@@ -75,3 +75,192 @@ func TestRedactLaunchOptionsDoesNotLeakOrOverreach(t *testing.T) {
 		t.Error("ordinary options should not be reported as risky")
 	}
 }
+
+// --- loginusers.vdf -----------------------------------------------------
+
+func writeVDF(t *testing.T, root, rel, body string) {
+	t.Helper()
+	p := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+const loginUsers = `"users"
+{
+	"76561198000000001"
+	{
+		"AccountName"		"old"
+		"MostRecent"		"0"
+		"Timestamp"		"1000"
+	}
+	"76561198000000002"
+	{
+		"AccountName"		"recent"
+		"MostRecent"		"1"
+		"Timestamp"		"2000"
+	}
+	"76561198000000003"
+	{
+		"AccountName"		"newest-but-not-current"
+		"MostRecent"		"0"
+		"Timestamp"		"9999"
+	}
+}
+`
+
+// The account Steam marks MostRecent wins even when another has a later
+// timestamp: the timestamp only breaks ties within the same flag.
+func TestLoggedInUserPrefersMostRecentFlag(t *testing.T) {
+	root := t.TempDir()
+	writeVDF(t, root, "config/loginusers.vdf", loginUsers)
+
+	got, err := LoggedInUser([]string{root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "76561198000000002" {
+		t.Errorf("LoggedInUser = %q, want the MostRecent account", got)
+	}
+}
+
+func TestLoggedInUserFallsBackToTimestamp(t *testing.T) {
+	root := t.TempDir()
+	writeVDF(t, root, "config/loginusers.vdf", `"users"
+{
+	"76561198000000001" { "Timestamp" "1000" }
+	"76561198000000002" { "Timestamp" "3000" }
+}
+`)
+	got, err := LoggedInUser([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "76561198000000002" {
+		t.Errorf("LoggedInUser = %q, want the latest timestamp", got)
+	}
+}
+
+func TestLoggedInUserReportsAbsence(t *testing.T) {
+	if _, err := LoggedInUser([]string{t.TempDir()}); err == nil {
+		t.Fatal("expected an error when no loginusers.vdf exists")
+	}
+	root := t.TempDir()
+	writeVDF(t, root, "config/loginusers.vdf", `"users" { }`)
+	if _, err := LoggedInUser([]string{root}); err == nil {
+		t.Fatal("expected an error when the file lists no users")
+	}
+}
+
+// --- compat tools and launch options ------------------------------------
+
+func TestScanCompatToolsSkipsGlobalDefault(t *testing.T) {
+	root := t.TempDir()
+	writeVDF(t, root, "config/config.vdf", `"InstallConfigStore"
+{
+	"Software"
+	{
+		"Valve"
+		{
+			"Steam"
+			{
+				"CompatToolMapping"
+				{
+					"0" { "name" "proton_experimental" }
+					"220" { "name" "Proton-GE" }
+					"440" { "name" "" }
+				}
+			}
+		}
+	}
+}
+`)
+	got := ScanCompatTools([]string{root})
+	if got["220"] != "Proton-GE" {
+		t.Errorf("per-app tool = %q", got["220"])
+	}
+	// "0" is the global default, not a per-app override.
+	if _, ok := got["0"]; ok {
+		t.Error("the global default should not appear as an app override")
+	}
+	// An empty name is not an override either.
+	if _, ok := got["440"]; ok {
+		t.Error("an empty tool name should be ignored")
+	}
+}
+
+func TestScanLaunchOptions(t *testing.T) {
+	root := t.TempDir()
+	writeVDF(t, root, "userdata/123/config/localconfig.vdf", `"UserLocalConfigStore"
+{
+	"Software"
+	{
+		"Valve"
+		{
+			"Steam"
+			{
+				"apps"
+				{
+					"220" { "LaunchOptions" "-novid %command%" }
+					"440" { "LaunchOptions" "" }
+				}
+			}
+		}
+	}
+}
+`)
+	got := ScanLaunchOptions([]string{root})
+	if got["220"] != "-novid %command%" {
+		t.Errorf("launch options = %q", got["220"])
+	}
+	if _, ok := got["440"]; ok {
+		t.Error("an empty launch option should be ignored")
+	}
+}
+
+func TestScanEnrichesAppsWithOverrides(t *testing.T) {
+	root := t.TempDir()
+	writeVDF(t, root, "steamapps/libraryfolders.vdf",
+		`"libraryfolders" { "0" { "path" "`+root+`" } }`)
+	writeVDF(t, root, "steamapps/appmanifest_220.acf",
+		`"AppState" { "appid" "220" "name" "Half-Life 2" "installdir" "hl2" "StateFlags" "4" }`)
+	writeVDF(t, root, "config/config.vdf",
+		`"InstallConfigStore" { "Software" { "Valve" { "Steam" { "CompatToolMapping" { "220" { "name" "Proton-GE" } } } } } }`)
+	writeVDF(t, root, "userdata/1/config/localconfig.vdf",
+		`"UserLocalConfigStore" { "Software" { "Valve" { "Steam" { "apps" { "220" { "LaunchOptions" "-novid" } } } } } }`)
+
+	rep, err := Scan([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Apps) != 1 {
+		t.Fatalf("got %d apps, want 1", len(rep.Apps))
+	}
+	if rep.Apps[0].CompatTool != "Proton-GE" {
+		t.Errorf("CompatTool = %q", rep.Apps[0].CompatTool)
+	}
+	if rep.Apps[0].LaunchOptions != "-novid" {
+		t.Errorf("LaunchOptions = %q", rep.Apps[0].LaunchOptions)
+	}
+}
+
+// A malformed or absent config must not fail the scan; overrides are optional.
+func TestScanSurvivesMissingOverrideFiles(t *testing.T) {
+	root := t.TempDir()
+	writeVDF(t, root, "steamapps/libraryfolders.vdf",
+		`"libraryfolders" { "0" { "path" "`+root+`" } }`)
+	writeVDF(t, root, "steamapps/appmanifest_220.acf",
+		`"AppState" { "appid" "220" "name" "HL2" "installdir" "hl2" "StateFlags" "4" }`)
+	writeVDF(t, root, "config/config.vdf", "this is not vdf {{{")
+
+	rep, err := Scan([]string{root})
+	if err != nil {
+		t.Fatalf("a malformed config.vdf must not fail the scan: %v", err)
+	}
+	if len(rep.Apps) != 1 || rep.Apps[0].CompatTool != "" {
+		t.Errorf("apps = %+v", rep.Apps)
+	}
+}
