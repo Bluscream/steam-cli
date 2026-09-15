@@ -32,6 +32,8 @@ type EndpointStatus struct {
 }
 
 type CMStatus struct {
+	Probe string `json:"probe"` // TCP reachability, not authenticated CM logon
+
 	Server    string `json:"server"`
 	Status    string `json:"status"` // online, unreachable
 	Error     string `json:"error,omitempty"`
@@ -212,13 +214,13 @@ func (m *Monitor) Check(ctx context.Context, checkCM, checkCoordinator bool) (Re
 	}
 
 	var cmList []CMStatus
+	var cmErr error
 	if checkCM {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			var err error
-			cmList, err = m.probeCMs(ctx)
-			if err != nil {
+			cmList, cmErr = m.probeCMs(ctx)
+			if cmErr != nil {
 				cmList = nil
 			}
 		}()
@@ -226,6 +228,9 @@ func (m *Monitor) Check(ctx context.Context, checkCM, checkCoordinator bool) (Re
 
 	wg.Wait()
 
+	if cmErr != nil {
+		report.Warnings = append(report.Warnings, "connection manager probes: "+cmErr.Error())
+	}
 	report.Endpoints = endpoints
 	report.PlayerCounts = counts
 	report.Coordinators = coords
@@ -244,10 +249,15 @@ func (m *Monitor) probeHTTP(ctx context.Context, name, target string) EndpointSt
 		if errors.As(err, &se) {
 			// A non-2xx answer still proves the host is serving traffic.
 			st.HTTPCode = se.Code
-			st.Status = "normal"
+			st.Status = "error"
+			st.Error = fmt.Sprintf("HTTP %d; service health could not be confirmed", se.Code)
+			if se.Code >= 300 && se.Code < 400 {
+				st.Status = "normal"
+				st.Error = ""
+			}
 			if se.Code >= 500 {
 				st.Status = "down"
-			} else if ms > SlowThreshold.Milliseconds() {
+			} else if st.Status == "normal" && ms > SlowThreshold.Milliseconds() {
 				st.Status = "slow"
 			}
 			return st
@@ -310,6 +320,9 @@ func (m *Monitor) fetchGameServersStatus(ctx context.Context, appID int) (Coordi
 	if err := json.Unmarshal(body, &res); err != nil {
 		return CoordinatorStatus{}, fmt.Errorf("decode coordinator status: %w", err)
 	}
+	if len(res.Result.Services) == 0 && len(res.Result.Matchmaking) == 0 && len(res.Result.Datacenters) == 0 {
+		return CoordinatorStatus{}, errors.New("coordinator status response contains no service data")
+	}
 	return CoordinatorStatus{
 		Services:    res.Result.Services,
 		Matchmaking: res.Result.Matchmaking,
@@ -370,8 +383,8 @@ func probeSocket(ctx context.Context, addr string) CMStatus {
 	ms := time.Since(start).Milliseconds()
 
 	if err != nil {
-		return CMStatus{Server: addr, Status: "unreachable", LatencyMS: ms, Error: err.Error()}
+		return CMStatus{Probe: "tcp_connect", Server: addr, Status: "unreachable", LatencyMS: ms, Error: err.Error()}
 	}
 	conn.Close()
-	return CMStatus{Server: addr, Status: "online", LatencyMS: ms}
+	return CMStatus{Probe: "tcp_connect", Server: addr, Status: "online", LatencyMS: ms}
 }

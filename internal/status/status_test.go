@@ -110,10 +110,10 @@ func TestProbeHTTPStatuses(t *testing.T) {
 		t.Errorf("503 => %+v, want down/503", got)
 	}
 
-	// A 4xx still proves the host serves traffic.
+	// A 4xx proves reachability, but cannot establish service health.
 	code.Store(http.StatusNotFound)
-	if got := m.probeHTTP(context.Background(), "t", ts.URL+"/"); got.Status != "normal" || got.HTTPCode != 404 {
-		t.Errorf("404 => %+v, want normal/404", got)
+	if got := m.probeHTTP(context.Background(), "t", ts.URL+"/"); got.Status != "error" || got.HTTPCode != 404 {
+		t.Errorf("404 => %+v, want error/404", got)
 	}
 }
 
@@ -289,5 +289,18 @@ func TestReportSerializesCleanly(t *testing.T) {
 	}
 	if strings.Contains(string(b), `"latency":`) {
 		t.Error("report should not expose raw nanosecond durations")
+	}
+}
+
+func TestCMFailureIsReported(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{}`)) }))
+	defer ts.Close()
+	m := Monitor{HTTP: testClient(), WebAPIURL: ts.URL, StoreURL: ts.URL, CommunityURL: ts.URL, HelpURL: ts.URL, Apps: []TrackedApp{{"test", 42}}}
+	r, e := m.Check(context.Background(), true, false)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "connection manager") {
+		t.Fatal(r.Warnings)
 	}
 }
