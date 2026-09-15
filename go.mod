@@ -8,6 +8,7 @@ require (
 	github.com/andygrunwald/vdf v1.1.0
 	github.com/gofrs/flock v0.13.1
 	github.com/jedib0t/go-pretty/v6 v6.8.3
+	github.com/rumblefrog/go-a2s v1.0.3
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/term v0.46.0
 )

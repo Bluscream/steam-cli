@@ -17,6 +17,9 @@ github.com/mattn/go-runewidth
 # github.com/rivo/uniseg v0.4.7
 ## explicit; go 1.18
 github.com/rivo/uniseg
+# github.com/rumblefrog/go-a2s v1.0.3
+## explicit; go 1.19
+github.com/rumblefrog/go-a2s
 # github.com/spf13/cobra v1.10.2
 ## explicit; go 1.15
 github.com/spf13/cobra
