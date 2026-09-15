@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -138,6 +139,25 @@ func thousandsT(v any) string {
 		return thousands(int(n))
 	}
 	return fmt.Sprint(v)
+}
+
+// numberT groups digits for a human view and leaves them bare for CSV, which
+// exists to be parsed. Quoting keeps "1,234,567" valid CSV, but a consumer
+// should not have to strip separators out of a numeric column.
+func (o *options) numberT() text.Transformer {
+	if o.format == "csv" {
+		return func(v any) string { return fmt.Sprint(v) }
+	}
+	return thousandsT
+}
+
+// sizeCell renders a byte count for the chosen output: human-readable for a
+// table, bare bytes for CSV.
+func (o *options) sizeCell(n int64) string {
+	if o.format == "csv" {
+		return strconv.FormatInt(n, 10)
+	}
+	return humanBytes(n)
 }
 
 // heading prints a section title above a table. go-pretty's own SetTitle wraps

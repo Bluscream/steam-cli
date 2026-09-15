@@ -495,7 +495,7 @@ func searchCommand(o *options) *cobra.Command {
 					t := o.newTable(w)
 					t.AppendHeader(table.Row{"ID", "Title", "Game", "Subscribers", "Updated"})
 					t.SetColumnConfigs([]table.ColumnConfig{
-						{Number: 4, Align: text.AlignRight, Transformer: thousandsT},
+						{Number: 4, Align: text.AlignRight, Transformer: o.numberT()},
 					})
 					for _, it := range res.WorkshopItems {
 						gameName := it.AppName

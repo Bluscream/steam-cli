@@ -86,7 +86,7 @@ func (o *options) renderStatus(out io.Writer, report status.Report) {
 		pt := o.newTable(out)
 		pt.AppendHeader(table.Row{"Title", "AppID", "Players"})
 		pt.SetColumnConfigs([]table.ColumnConfig{
-			{Number: 3, Align: text.AlignRight, Transformer: thousandsT},
+			{Number: 3, Align: text.AlignRight, Transformer: o.numberT()},
 		})
 		for _, pc := range report.PlayerCounts {
 			if pc.Error != "" {

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1411,5 +1412,65 @@ func TestCurrentUserResolutionPrecedence(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error should mention %q: %v", want, err)
 		}
+	}
+}
+
+// CSV exists to be parsed, so numeric columns must not carry the grouping and
+// units that make a table readable.
+func TestCSVEmitsMachineReadableNumbers(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	steamapps := filepath.Join(root, "steamapps")
+	if err := os.MkdirAll(steamapps, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(steamapps, "libraryfolders.vdf"),
+		[]byte("\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\""+root+"\"\n\t}\n}\n"), 0o644)
+	os.WriteFile(filepath.Join(steamapps, "appmanifest_1.acf"),
+		[]byte("\"AppState\"\n{\n\t\"appid\"\t\t\"1\"\n\t\"name\"\t\t\"Test\"\n\t\"installdir\"\t\t\"T\"\n\t\"StateFlags\"\t\t\"4\"\n\t\"SizeOnDisk\"\t\t\"35020224\"\n}\n"), 0o644)
+
+	csvOut, err := execute(t, "--offline", "-o", "csv", "library", "--root", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := csv.NewReader(strings.NewReader(csvOut)).ReadAll()
+	if err != nil {
+		t.Fatalf("output is not valid CSV: %v\n%s", err, csvOut)
+	}
+	if len(rows) < 2 {
+		t.Fatalf("expected a header and a row:\n%s", csvOut)
+	}
+	if !strings.Contains(csvOut, "35020224") {
+		t.Errorf("CSV should carry raw bytes, got:\n%s", csvOut)
+	}
+	if strings.Contains(csvOut, "MiB") {
+		t.Errorf("CSV should not carry human units, got:\n%s", csvOut)
+	}
+
+	// The table form keeps the readable units.
+	tableOut, err := execute(t, "--offline", "library", "--root", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(tableOut, "MiB") {
+		t.Errorf("table output should be human-readable, got:\n%s", tableOut)
+	}
+}
+
+func TestCSVHeaderToggle(t *testing.T) {
+	cleanEnv(t)
+	with, err := execute(t, "--offline", "-o", "csv", "id", "76561197960287930")
+	if err != nil {
+		t.Fatal(err)
+	}
+	without, err := execute(t, "--offline", "-o", "csv", "--with-header=false", "id", "76561197960287930")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strings.Split(strings.TrimSpace(without), "\n")) > len(strings.Split(strings.TrimSpace(with), "\n")) {
+		t.Error("--with-header=false should not add lines")
+	}
+	if !strings.Contains(without, "76561197960287930") {
+		t.Errorf("data should survive without a header:\n%s", without)
 	}
 }

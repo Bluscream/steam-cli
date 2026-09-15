@@ -426,8 +426,8 @@ func workshopCommand(o *options) *cobra.Command {
 					t := o.newTable(w)
 					t.AppendHeader(table.Row{"ID", "Title", "Subscribers", "Favorites", "Updated"})
 					t.SetColumnConfigs([]table.ColumnConfig{
-						{Number: 3, Align: text.AlignRight, Transformer: thousandsT},
-						{Number: 4, Align: text.AlignRight, Transformer: thousandsT},
+						{Number: 3, Align: text.AlignRight, Transformer: o.numberT()},
+						{Number: 4, Align: text.AlignRight, Transformer: o.numberT()},
 					})
 					for _, it := range items {
 						t.AppendRow(table.Row{it.PublishedFileID, truncate(it.Title, 48),

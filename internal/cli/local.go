@@ -112,7 +112,7 @@ func libraryCommand(o *options) *cobra.Command {
 				for _, a := range apps {
 					size := ""
 					if n, err := strconv.ParseInt(a.SizeOnDisk, 10, 64); err == nil && n > 0 {
-						size = humanBytes(n)
+						size = o.sizeCell(n)
 					}
 					t.AppendRow(table.Row{a.AppID, truncate(a.Name, 44), size, a.Library})
 				}
