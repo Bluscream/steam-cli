@@ -35,6 +35,8 @@ Other options:
 ## A quick tour
 
 ```sh
+steamcli info                             # services, account, client, libraries
+steamcli search "half-life"               # store, workshop, library, owned, players
 steamcli --output raw status              # service health, player counts, CMs, datacenters
 steamcli web player 76561197960287930     # Web API helpers
 steamcli web methods GetOwnedGames        # discover any of ~170 methods

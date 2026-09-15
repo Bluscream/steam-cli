@@ -161,3 +161,34 @@ Build, `go vet` and the suite passed on arrival; the following were corrected.
 Coverage moved 71.9% → 69.2% with 2,695 lines added; `internal/library` fell to
 47% and gained tests only for the redaction added here. Raising coverage on the
 new `info`, `apps` and `search` code remains outstanding.
+
+### Refactoring pass
+
+After the defect fixes above, the following structural problems were addressed.
+
+- **A data race.** `search` and `info` fan out across goroutines that each
+  resolved the configuration, and resolving it writes back to the shared options
+  struct when a profile sets `allow_http`. Reproducible under `-race`; the
+  reproduction is kept as `TestSearchConcurrentSettingsIsRaceFree`. Settings are
+  now resolved once with `sync.Once`, which also removed four redundant
+  file reads per `apps` invocation.
+- **Divergent user resolution.** Three commands had grown their own copy of
+  "resolve the logged-in user" and `search` had lost the desktop-client
+  fallback, so it resolved a different account from `web` and `info` on the same
+  machine. One implementation now serves all three.
+- **CSV carried human formatting** — `546,909`, `383 ms`, `33.4 MiB`. go-pretty
+  quotes the grouped numbers so it still parsed, but a consumer should not have
+  to strip separators and units out of a numeric column. CSV now emits bare
+  numbers and raw bytes; the table keeps the readable form.
+- **The new local-config readers were untested.** `LoggedInUser`,
+  `ScanCompatTools` and `ScanLaunchOptions` decide which account a command acts
+  on and parse user-supplied VDF. Covered, including MostRecent winning over a
+  later timestamp and a malformed `config.vdf` not failing the scan.
+- **`info`, `search` and `apps` were undocumented**; the README command banner
+  predated all three.
+
+Coverage: `internal/library` 47% → 83.8%, `internal/cli` 63.9% → 67.2%,
+project 69.2% → 72.6%, above the 71.9% that preceded this round of work.
+
+The ASF memory conversion was checked against a live instance: 182,319 KB
+reported by ASF renders as 178.1 MiB, matching its OpenAPI schema's KB unit.

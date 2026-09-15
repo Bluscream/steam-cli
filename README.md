@@ -7,7 +7,10 @@
 A cross-platform Go CLI for Steam Web API, Valve SteamCMD, ArchiSteamFarm IPC, and local Steam metadata. Builds to a single executable. No telemetry, hosted middleware, browser automation, Python, Node, or .NET runtime is required by the CLI.
 
 ```text
+steamcli info       one-shot overview: services, your account, client, libraries
 steamcli status     Steam service health, player counts, CMs, game coordinators
+steamcli search     one query across store, workshop, your library, and players
+steamcli apps       find games by name and resolve them to AppIDs
 steamcli web        API discovery, raw calls, and common player/game queries
 steamcli workshop   subscriptions, favorites, search, and collection management
 steamcli client     drive the desktop Steam client (run, install, steam:// URLs)
@@ -143,6 +146,8 @@ Only `*_env` / `*_file` keys appear here; credential values never do. See [confi
 ./bin/steamcli web call IPlayerService GetOwnedGames --input-json @request.json
 ```
 
+`web apps` searches the store by name; it is the same lookup that lets every AppID argument accept a game name, printing a notice to stderr naming what it resolved to.
+
 `web player`, aliased `profile`, renders a profile: persona, all three SteamID forms, online status or the game being played, community visibility, country, account creation, primary group and profile URL. Several IDs at once render as a table sorted by persona. `-o json` returns Valve's payload unchanged.
 
 `web call` discovers the HTTP verb and highest available version from `GetSupportedAPIList`. Catalogs are cached for 24 hours, separately for each API host/key fingerprint. `--offline web methods` uses that cache even when stale; no private player responses are cached. Some methods require a key or publisher permissions and some are not advertised at all.
@@ -155,6 +160,21 @@ For an undiscovered endpoint or to avoid the discovery request, specify the verb
 ```
 
 POST calls use form encoding in the body. `--param` / `-p` can be repeated and supports names such as `appids[0]`. `--input-json` accepts literal JSON, `@file`, or `-` for stdin; Steam service APIs receive it as an `input_json` form/query field. No SteamID-sized integer is converted through floating point. Arbitrary parameters are passed through; the CLI does not claim to validate every endpoint's schema or permissions.
+
+## Overview and search
+
+```sh
+./bin/steamcli info
+./bin/steamcli search "half-life"
+./bin/steamcli apps "portal"
+./bin/steamcli web news "team fortress 2"
+```
+
+`info` gathers Steam service health, the signed-in account, the desktop client and its libraries, and any configured ArchiSteamFarm, running the probes concurrently. Sections it cannot fetch are reported under `problems` rather than being silently omitted.
+
+`search` runs one query across the store, the Workshop, your installed library, your owned games and player profiles, rendering each category as its own table. Categories needing credentials you have not configured are skipped.
+
+Anywhere an APPID is accepted, a game name works too: it is resolved through the store and the resolution is announced on stderr, so the AppID actually used is never a guess you cannot see.
 
 ## Service status and Info
 
