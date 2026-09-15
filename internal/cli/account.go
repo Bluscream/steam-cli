@@ -190,8 +190,20 @@ func accountCommand(o *options) *cobra.Command {
 			// Try ASF first for nickname / privacy
 			asfc, asfErr := asfClient()
 			if asfErr == nil && asfc.BaseURL != "" {
+				targetBot := botFlag
+				if targetBot == "" || targetBot == "ASF" {
+					if u, err := account.Active(roots); err == nil && u.SteamID64 != "" {
+						if bName, err := asfc.BotNameForSteamID(cmd.Context(), u.SteamID64); err == nil && bName != "" {
+							targetBot = bName
+						}
+					}
+				}
+				if targetBot == "" {
+					targetBot = "ASF"
+				}
+
 				if nameFlag != "" && bioFlag == "" && realNameFlag == "" && customURLFlag == "" && countryFlag == "" {
-					msg, err := asfc.SetNickname(cmd.Context(), botFlag, nameFlag)
+					msg, err := asfc.SetNickname(cmd.Context(), targetBot, nameFlag)
 					if err == nil {
 						actionsDone = append(actionsDone, fmt.Sprintf("ASF nickname updated: %s", msg))
 						return o.emit(cmd, map[string]any{"method": "asf", "result": msg}, func(w io.Writer) {
@@ -200,7 +212,7 @@ func accountCommand(o *options) *cobra.Command {
 					}
 				}
 				if privacyFlag != "" && nameFlag == "" && bioFlag == "" && realNameFlag == "" && customURLFlag == "" && countryFlag == "" {
-					msg, err := asfc.SetPrivacy(cmd.Context(), botFlag, privacyFlag)
+					msg, err := asfc.SetPrivacy(cmd.Context(), targetBot, privacyFlag)
 					if err == nil {
 						actionsDone = append(actionsDone, fmt.Sprintf("ASF privacy updated: %s", msg))
 						return o.emit(cmd, map[string]any{"method": "asf", "result": msg}, func(w io.Writer) {
@@ -241,7 +253,7 @@ func accountCommand(o *options) *cobra.Command {
 	editCmd.Flags().StringVar(&customURLFlag, "custom-url", "", "Custom vanity URL")
 	editCmd.Flags().StringVar(&countryFlag, "country", "", "Country code")
 	editCmd.Flags().StringVar(&privacyFlag, "privacy", "", "Privacy settings: Private, FriendsOnly, Public")
-	editCmd.Flags().StringVarP(&botFlag, "bot", "b", "ASF", "ASF bot name to target if using ASF")
+	editCmd.Flags().StringVarP(&botFlag, "bot", "b", "", "ASF bot name to target if using ASF (default: matches logged-in user, else ASF)")
 
 	nameCmd := &cobra.Command{
 		Use:     "name NEW_NAME",
@@ -253,6 +265,7 @@ func accountCommand(o *options) *cobra.Command {
 			return editCmd.RunE(cmd, nil)
 		},
 	}
+	nameCmd.Flags().StringVarP(&botFlag, "bot", "b", "", "ASF bot name to target if using ASF (default: matches logged-in user, else ASF)")
 
 	privacyCmd := &cobra.Command{
 		Use:     "privacy LEVEL",
@@ -264,7 +277,9 @@ func accountCommand(o *options) *cobra.Command {
 			return editCmd.RunE(cmd, nil)
 		},
 	}
+	privacyCmd.Flags().StringVarP(&botFlag, "bot", "b", "", "ASF bot name to target if using ASF (default: matches logged-in user, else ASF)")
 
 	root.AddCommand(listCmd, switchCmd, activeCmd, forgetCmd, editCmd, nameCmd, privacyCmd)
 	return root
 }
+

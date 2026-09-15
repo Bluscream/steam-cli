@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"steamcli.local/steam/internal/account"
 	"steamcli.local/steam/internal/asf"
 	"steamcli.local/steam/internal/sdk"
 )
@@ -30,12 +31,33 @@ type IdleResult struct {
 	PID     int    `json:"pid,omitempty"`
 }
 
+// resolveBot returns bot if non-empty, or resolves to the active user's ASF bot if possible,
+// falling back to "ASF" (all bots).
+func (e *Engine) resolveBot(ctx context.Context, bot string) string {
+	if bot != "" && bot != "ASF" {
+		return bot
+	}
+	if e.ASFClient != nil && e.ASFClient.BaseURL != "" {
+		if u, err := account.Active(nil); err == nil && u.SteamID64 != "" {
+			if botName, err := e.ASFClient.BotNameForSteamID(ctx, u.SteamID64); err == nil && botName != "" {
+				return botName
+			}
+		}
+	}
+	if bot != "" {
+		return bot
+	}
+	return "ASF"
+}
+
 // Start starts idling the specified AppIDs and/or displaying custom text.
 // It attempts ASF first; if ASF is unavailable or fails, it falls back to the native SDK.
 func (e *Engine) Start(ctx context.Context, appIDs []int, customText string, bot string) (IdleResult, error) {
 	var asfErr error
 	if e.ASFClient != nil && e.ASFClient.BaseURL != "" {
-		res, err := e.ASFClient.Play(ctx, bot, appIDs, customText)
+		targetBot := e.resolveBot(ctx, bot)
+		res, err := e.ASFClient.Play(ctx, targetBot, appIDs, customText)
+
 		if err == nil {
 			return IdleResult{
 				Method:  "asf",
@@ -79,7 +101,8 @@ func (e *Engine) Stop(ctx context.Context, bot string) (string, error) {
 
 	// 1. ASF resume
 	if e.ASFClient != nil && e.ASFClient.BaseURL != "" {
-		msg, err := e.ASFClient.Resume(ctx, bot)
+		targetBot := e.resolveBot(ctx, bot)
+		msg, err := e.ASFClient.Resume(ctx, targetBot)
 		if err == nil {
 			messages = append(messages, "ASF: "+msg)
 		}

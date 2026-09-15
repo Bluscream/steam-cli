@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
+	"steamcli.local/steam/internal/account"
 	"steamcli.local/steam/internal/asf"
 )
 
@@ -16,7 +18,7 @@ func asfCommand(o *options) *cobra.Command {
 	var base, botsFlag string
 	root := &cobra.Command{Use: "asf", Short: "Control an ArchiSteamFarm instance through its IPC API"}
 	root.PersistentFlags().StringVar(&base, "url", "", "ASF base URL, including optional reverse-proxy prefix")
-	root.PersistentFlags().StringVarP(&botsFlag, "bots", "b", "", "Comma-separated bot names for commands that take a selector (default: ASF, meaning all bots)")
+	root.PersistentFlags().StringVarP(&botsFlag, "bots", "b", "", "Comma-separated bot names for commands that take a selector (default: scoped to active user, or ASF if none)")
 
 	// selector resolves a bot selector from the positional argument, then
 	// --bots, then ASF, which ArchiSteamFarm reads as every bot.
@@ -29,6 +31,7 @@ func asfCommand(o *options) *cobra.Command {
 		}
 		return "ASF"
 	}
+
 	client := func() (*asf.Client, error) {
 		s, e := o.settings()
 		if e != nil {
@@ -44,6 +47,25 @@ func asfCommand(o *options) *cobra.Command {
 		}
 		return &asf.Client{HTTP: o.http(), BaseURL: u, Password: p}, nil
 	}
+
+	// resolveWriteSelector scopes write operations (start, stop, pause, resume, command, etc.)
+	// to the active logged-in user's bot by default unless --bots or positional args are provided.
+	resolveWriteSelector := func(ctx context.Context, c *asf.Client, args []string) string {
+		if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
+			return args[0]
+		}
+		if strings.TrimSpace(botsFlag) != "" {
+			return botsFlag
+		}
+		// Attempt to resolve active logged-in Steam user's bot
+		if u, err := account.Active(nil); err == nil && u.SteamID64 != "" {
+			if botName, err := c.BotNameForSteamID(ctx, u.SteamID64); err == nil && botName != "" {
+				return botName
+			}
+		}
+		return "ASF"
+	}
+
 	emit := func(cmd *cobra.Command, b []byte, e error) error {
 		if len(b) > 0 {
 			if pe := o.printBytes(cmd, b); pe != nil {
@@ -141,12 +163,13 @@ func asfCommand(o *options) *cobra.Command {
 	for _, action := range []string{"start", "stop", "pause", "resume"} {
 		var permanent bool
 		var resume uint16
-		c := &cobra.Command{Use: action + " [SELECTOR]", Short: strings.Title(action) + " selected bots (default: --bots, else ASF)", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-			p, e := asf.BotPath(selector(args), strings.Title(action))
+		c := &cobra.Command{Use: action + " [SELECTOR]", Short: strings.Title(action) + " selected bots (default: scoped to active user, else ASF)", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+			c, e := client()
 			if e != nil {
 				return e
 			}
-			c, e := client()
+			botTarget := resolveWriteSelector(cmd.Context(), c, args)
+			p, e := asf.BotPath(botTarget, strings.Title(action))
 			if e != nil {
 				return e
 			}
@@ -163,14 +186,15 @@ func asfCommand(o *options) *cobra.Command {
 		}
 		root.AddCommand(c)
 	}
-	token := &cobra.Command{Use: "token [SELECTOR]", Aliases: []string{"2fa", "auth"}, Short: "Retrieve two-factor tokens (sensitive stdout)", Args: cobra.MaximumNArgs(1),
-		Example: "  steamcli asf token gabeN --output short\n  steamcli asf 2fa --bots gabeN,robinwalker"}
+	token := &cobra.Command{Use: "token [SELECTOR]", Aliases: []string{"2fa", "auth"}, Short: "Retrieve two-factor tokens (default: scoped to active user, else ASF)", Args: cobra.MaximumNArgs(1),
+		Example: "  steamcli asf token\n  steamcli asf token gabeN --output short\n  steamcli asf 2fa --bots gabeN,robinwalker"}
 	token.RunE = func(cmd *cobra.Command, args []string) error {
-		p, e := asf.BotPath(selector(args), "TwoFactorAuthentication/Token")
+		c, e := client()
 		if e != nil {
 			return e
 		}
-		c, e := client()
+		botTarget := resolveWriteSelector(cmd.Context(), c, args)
+		p, e := asf.BotPath(botTarget, "TwoFactorAuthentication/Token")
 		if e != nil {
 			return e
 		}
@@ -186,6 +210,7 @@ func asfCommand(o *options) *cobra.Command {
 	root.AddCommand(token)
 	return root
 }
+
 
 func render2FA(o *options, w io.Writer, b []byte) bool {
 	lines, ok := asf.Parse(b)

@@ -147,3 +147,31 @@ func TestParseDeclinesDataObjects(t *testing.T) {
 		t.Error("the ASF status object should be reported as unparsed")
 	}
 }
+
+func TestBotNameForSteamID(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/proxy/Api/Bot/ASF" {
+			w.Write([]byte(`{"Success":true,"Result":{"MyBot":{"BotName":"MyBot","s_SteamID":"76561198000000001","IsConnectedAndLoggedOn":true,"CardsFarmer":{"GamesToFarm":[]}},"OtherBot":{"BotName":"OtherBot","s_SteamID":"76561198000000002","IsConnectedAndLoggedOn":true,"CardsFarmer":{"GamesToFarm":[]}}}}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer s.Close()
+
+	c := Client{HTTP: httpx.New(time.Second, false, false), BaseURL: s.URL + "/proxy"}
+	bot, err := c.BotNameForSteamID(context.Background(), "76561198000000001")
+	if err != nil || bot != "MyBot" {
+		t.Fatalf("expected MyBot, got %s, err: %v", bot, err)
+	}
+
+	bot2, err := c.BotNameForSteamID(context.Background(), "76561198000000002")
+	if err != nil || bot2 != "OtherBot" {
+		t.Fatalf("expected OtherBot, got %s, err: %v", bot2, err)
+	}
+
+	_, err = c.BotNameForSteamID(context.Background(), "99999999999999999")
+	if err == nil {
+		t.Fatal("expected error for non-matching steam id")
+	}
+}
+

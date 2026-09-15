@@ -530,11 +530,12 @@ func TestASFBotsFlagAndDefaultSelector(t *testing.T) {
 		if _, err := execute(t, tc.args...); err != nil {
 			t.Fatalf("%v: %v", tc.args, err)
 		}
-		if len(paths) != 1 || paths[0] != tc.want {
-			t.Errorf("%v => %v, want %q", tc.args, paths, tc.want)
+		if len(paths) == 0 || paths[len(paths)-1] != tc.want {
+			t.Errorf("%v => %v, want last %q", tc.args, paths, tc.want)
 		}
 	}
 }
+
 
 func TestOutputFormatValidation(t *testing.T) {
 	cleanEnv(t)

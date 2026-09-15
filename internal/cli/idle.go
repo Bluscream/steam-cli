@@ -75,7 +75,7 @@ func idleCommand(o *options) *cobra.Command {
 			})
 		},
 	}
-	root.Flags().StringVarP(&botFlag, "bot", "b", "ASF", "ASF bot selector to target")
+	root.Flags().StringVarP(&botFlag, "bot", "b", "", "ASF bot selector to target (default: matches logged-in user, else ASF)")
 	root.Flags().BoolVar(&sdkOnly, "sdk", false, "Force using native Steamworks SDK instead of ASF")
 
 	stopCmd := &cobra.Command{
@@ -108,8 +108,9 @@ func idleCommand(o *options) *cobra.Command {
 			})
 		},
 	}
-	stopCmd.Flags().StringVarP(&botFlag, "bot", "b", "ASF", "ASF bot selector to target")
+	stopCmd.Flags().StringVarP(&botFlag, "bot", "b", "", "ASF bot selector to target (default: matches logged-in user, else ASF)")
 
 	root.AddCommand(stopCmd)
 	return root
 }
+

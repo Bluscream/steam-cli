@@ -302,3 +302,25 @@ func (c *Client) Resume(ctx context.Context, bot string) (string, error) {
 	}
 	return string(b), nil
 }
+
+// BotNameForSteamID queries ASF for all bots and returns the bot name associated with steamID64.
+func (c *Client) BotNameForSteamID(ctx context.Context, steamID64 string) (string, error) {
+	if steamID64 == "" {
+		return "", errors.New("empty SteamID64")
+	}
+	b, err := c.Call(ctx, "GET", "Api/Bot/ASF", nil, nil)
+	if err != nil {
+		return "", err
+	}
+	summaries, ok := Bots(b)
+	if !ok {
+		return "", errors.New("could not parse ASF bot list")
+	}
+	for _, s := range summaries {
+		if s.SteamID == steamID64 {
+			return s.Name, nil
+		}
+	}
+	return "", fmt.Errorf("no ASF bot found matching SteamID %s", steamID64)
+}
+

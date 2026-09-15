@@ -107,6 +107,7 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 		},
 	}
 
+	var nickBotFlag string
 	nickCmd := &cobra.Command{
 		Use:     "nick NEW_NAME",
 		Aliases: []string{"nickname"},
@@ -115,12 +116,17 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			for _, c := range accCmd.Commands() {
 				if c.Name() == "name" {
+					if nickBotFlag != "" {
+						_ = c.Flags().Set("bot", nickBotFlag)
+					}
 					return c.RunE(cmd, args)
 				}
 			}
 			return nil
 		},
 	}
+	nickCmd.Flags().StringVarP(&nickBotFlag, "bot", "b", "", "ASF bot name to target if using ASF (default: matches logged-in user, else ASF)")
+
 
 	runClientCmd := &cobra.Command{
 		Use:   "run APPID",
