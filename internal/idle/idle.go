@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"steamcli.local/steam/internal/account"
 	"steamcli.local/steam/internal/asf"
@@ -114,7 +113,7 @@ func (e *Engine) Stop(ctx context.Context, bot string) (string, error) {
 		if b, err := os.ReadFile(pidFile); err == nil {
 			pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
 			if err == nil && pid > 0 {
-				_ = syscall.Kill(pid, syscall.SIGTERM)
+				terminatePID(pid)
 				_ = os.Remove(pidFile)
 				messages = append(messages, fmt.Sprintf("Stopped native SDK idle process (PID %d)", pid))
 			}
@@ -136,7 +135,7 @@ func (e *Engine) startSDKIdle(ctx context.Context, appID int) (int, error) {
 	// Stop existing if running
 	if b, err := os.ReadFile(pidFile); err == nil {
 		if oldPID, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && oldPID > 0 {
-			_ = syscall.Kill(oldPID, syscall.SIGTERM)
+			terminatePID(oldPID)
 		}
 	}
 
