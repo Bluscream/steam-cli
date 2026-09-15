@@ -218,7 +218,7 @@ A 3xx or 4xx answer is reported as `normal`, because it still proves the host is
 ./bin/steamcli account privacy FriendsOnly              # set profile privacy
 ```
 
-Aliases like `steamcli acc *` and `steamcli user *` are also supported. Profile updates prefer ArchiSteamFarm when reachable and configured, falling back to authenticated Steam Community sessions (`STEAM_LOGIN_SECURE`).
+Aliases like `steamcli acc *` and `steamcli user *` are also supported. Profile updates prefer ArchiSteamFarm when reachable and configured (automatically targeting the ASF bot matching your local active Steam account, unless overridden with `--bot`), falling back to authenticated Steam Community sessions (`STEAM_LOGIN_SECURE`).
 
 ## Game Idling and Spoofing
 
@@ -392,7 +392,7 @@ Authentication uses the `Authentication` header, never a password query string a
 
 A credential containing control characters cannot be sent as a header. Rather than surfacing Go's transport error, which reads like a network failure, the CLI names the header and suggests checking the value for stray whitespace, newlines, or terminal escape sequences. The credential itself is never echoed. Both user-supplied LAN ASF instances were tested with this option and header authentication.
 
-Commands that act on bots take a selector: a positional argument, the persistent `--bots`/`-b` flag, or neither, in which case `ASF` is used and ArchiSteamFarm reads that as every bot. A positional argument wins over the flag. Selectors are comma-separated bot names.
+Commands that act on bots take a selector: a positional argument, the persistent `--bots`/`-b` flag, or neither. For write operations and token retrieval (`start`, `stop`, `pause`, `resume`, `token`, `idle`, `nick`, `account edit`, `account privacy`), **`steamcli` automatically resolves the bot associated with your active local Steam account** (`SteamID64` from `loginusers.vdf`), falling back to `ASF` (all bots) only if no matching bot is found or no local account is active. A positional argument or explicit `--bot`/`--bots` flag always overrides this default. Selectors are comma-separated bot names.
 
 `asf schema` retrieves `/swagger/ASF/swagger.json` from your instance, covering its version and plugins. Generic `asf call` reaches endpoints without requiring a CLI release. A response with `Success:false` prints its JSON and exits nonzero. The Web API and ASF are separate authentication domains.
 

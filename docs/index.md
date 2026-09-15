@@ -37,6 +37,10 @@ Other options:
 ```sh
 steamcli info                             # services, account, client, libraries
 steamcli search "half-life"               # store, workshop, library, owned, players
+steamcli account list                     # list saved Steam accounts
+steamcli account switch "GabeN"           # switch active account
+steamcli nick "NewNick"                   # quickly change Steam nickname
+steamcli idle 730                         # idle game via ASF (with native SDK fallback)
 steamcli --output raw status              # service health, player counts, CMs, datacenters
 steamcli web player 76561197960287930     # Web API helpers
 steamcli web methods GetOwnedGames        # discover any of ~170 methods
