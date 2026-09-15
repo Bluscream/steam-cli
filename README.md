@@ -23,6 +23,9 @@ steamcli sdk        discover and invoke native Steamworks SDK methods (CGO-free)
 steamcli library    local library and installed-app inspection
 steamcli id         offline SteamID64 / Steam2 / Steam3 conversion
 steamcli whoami     show currently active Steam account
+steamcli nick       quick shortcut to change active Steam nickname
+steamcli run        quick shortcut to launch game in Steam client
+steamcli friends    quick shortcut to view friend list
 steamcli config     non-secret profiles
 steamcli doctor     local configuration and runtime diagnostics
 steamcli completion bash | zsh | fish | powershell
@@ -202,6 +205,30 @@ Anywhere an APPID is accepted, a game name works too: it is resolved through the
 Reports what [steamstat.us](https://steamstat.us/) reports, from the same public sources: reachability and latency for the Store, Community, Web API and Help hosts; live player counts for eight major titles (`--app` replaces that list); the CS2 game coordinator's service states, matchmaking queues and per-region datacenter capacity; and TCP handshake latency against connection managers drawn from `ISteamDirectory/GetCMList`.
 
 A 3xx or 4xx answer is reported as `normal`, because it still proves the host is serving traffic; only 5xx and transport failures are `down`. Above 1500 ms an endpoint is `slow`. Probe failures are recorded per item rather than failing the run, so one unreachable service does not hide the rest. Coordinator status needs a Web API key; without one the report carries a warning instead of silently omitting it. Only CS2 exposes this interface, so it is the only coordinator queried.
+
+## Account management and switching
+
+```sh
+./bin/steamcli whoami                                   # show active / autologin account
+./bin/steamcli account list                             # list all accounts saved in loginusers.vdf
+./bin/steamcli account switch "GabeN" --restart         # switch autologin user (gracefully restarts client if running)
+./bin/steamcli account forget "OldUser"                 # remove account from login records
+./bin/steamcli nick "NewNickname"                       # quick nickname update (ASF or Community session)
+./bin/steamcli account edit --summary "Bio text" --real-name "Gabe" --privacy Public
+./bin/steamcli account privacy FriendsOnly              # set profile privacy
+```
+
+Aliases like `steamcli acc *` and `steamcli user *` are also supported. Profile updates prefer ArchiSteamFarm when reachable and configured, falling back to authenticated Steam Community sessions (`STEAM_LOGIN_SECURE`).
+
+## Game Idling and Spoofing
+
+```sh
+./bin/steamcli idle 730                                 # idle CS2 in background
+./bin/steamcli idle 440 730 "Playing Custom Status"     # idle multiple games or set custom game text
+./bin/steamcli idle stop                                # resume normal state or stop idle process
+```
+
+Idling uses ArchiSteamFarm's `!play` command if an ASF instance is detected and running. If ASF is not configured or fails, it automatically falls back to spawning an isolated background process interacting directly with the Steamworks client runtime, saving the process PID into the data directory (`$DATA_DIR/idle.pid`).
 
 ## Workshop
 
