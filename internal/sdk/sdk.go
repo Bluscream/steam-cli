@@ -45,7 +45,12 @@ type Method struct {
 	Interface string      `json:"interface"`
 	Accessors []Accessor  `json:"accessors,omitempty"`
 }
+type Field struct {
+	Name string `json:"fieldname"`
+	Type string `json:"fieldtype"`
+}
 type Definition struct {
+	Fields    []Field    `json:"fields"`
 	Class     string     `json:"classname"`
 	Struct    string     `json:"struct"`
 	Methods   []Method   `json:"methods"`
@@ -119,6 +124,21 @@ func Generate(s Schema) ([]byte, error) {
 	host, _ := sources.ReadFile("native/host.cpp")
 	var b bytes.Buffer
 	b.Write(host)
+	fieldTraits := map[string]int{}
+	for _, d := range append(append([]Definition{}, s.Structs...), s.Callbacks...) {
+		for _, f := range d.Fields {
+			if !identifier.MatchString(f.Name) {
+				return nil, fmt.Errorf("invalid SDK field %q", f.Name)
+			}
+			key := d.Struct + "." + f.Name
+			if _, ok := fieldTraits[key]; ok {
+				continue
+			}
+			n := len(fieldTraits)
+			fieldTraits[key] = n
+			fmt.Fprintf(&b, "\ntemplate<class T,class=void> struct HasField%d:std::false_type{};template<class T> struct HasField%d<T,std::void_t<decltype(sizeof(((T*)nullptr)->%s))>>:std::true_type{};\n", n, n, f.Name)
+		}
+	}
 	b.WriteString("\nvoid register_methods(){\n")
 	seen := map[string]bool{}
 	for _, m := range s.Methods() {
@@ -147,6 +167,12 @@ func Generate(s Schema) ([]byte, error) {
 			return nil, fmt.Errorf("invalid SDK type %q", d.Struct)
 		}
 		fmt.Fprintf(&b, "layout<%s>(%q);\n", d.Struct, d.Struct)
+		for _, f := range d.Fields {
+			if !identifier.MatchString(f.Name) {
+				return nil, fmt.Errorf("invalid SDK field %q", f.Name)
+			}
+			fmt.Fprintf(&b, "[](auto tag){using T=typename decltype(tag)::type;if constexpr(HasField%d<T>::value){layouts[%q][\"fields\"][%q]={{\"offset\",offsetof(T,%s)},{\"size\",sizeof(((T*)nullptr)->%s)},{\"type\",%q}};}}(TypeTag<%s>{});\n", fieldTraits[d.Struct+"."+f.Name], d.Struct, f.Name, f.Name, f.Name, f.Type, d.Struct)
+		}
 	}
 	for _, d := range s.Callbacks {
 		fmt.Fprintf(&b, "callback<%s>(%q);\n", d.Struct, d.Struct)
@@ -173,6 +199,16 @@ func Load(dataDir string) (Build, error) {
 	e = json.Unmarshal(raw, &b)
 	if e == nil && b.Platform != runtime.GOOS+"/"+runtime.GOARCH {
 		e = errors.New("native helper was built for another platform; run sdk build")
+	}
+	if e == nil {
+		if !filepath.IsAbs(b.Helper) || !filepath.IsAbs(b.Library) {
+			return b, errors.New("native build paths must be absolute; run sdk build")
+		}
+		for _, p := range []string{b.Helper, b.Library} {
+			if _, err := os.Stat(p); err != nil {
+				return b, fmt.Errorf("native build file unavailable; run sdk build: %w", err)
+			}
+		}
 	}
 	return b, e
 }
@@ -298,6 +334,7 @@ func Compile(ctx context.Context, dir, dataDir, compiler, library string, progre
 			args = append(args, "-ldl", "-pthread")
 		}
 		command := exec.CommandContext(ctx, cpp, args...)
+		configureProcess(command)
 		command.Stdout = progress
 		command.Stderr = progress
 		if e = command.Run(); e != nil {
@@ -338,10 +375,19 @@ func atomicWrite(p string, b []byte) error {
 // SDK diagnostic output is redirected to stderr by the helper itself.
 func Run(ctx context.Context, b Build, appID string, input io.Reader, out, errOut io.Writer) error {
 	command := exec.CommandContext(ctx, b.Helper, b.Library)
+	configureProcess(command)
 	command.Stdin = input
 	command.Stdout = out
 	command.Stderr = errOut
 	command.WaitDelay = 2 * time.Second
+	command.Env = environment(appID)
+	if e := command.Run(); e != nil {
+		return fmt.Errorf("native SDK helper failed (see its JSON result or stderr): %w", e)
+	}
+	return nil
+}
+
+func environment(appID string) []string {
 	var env []string
 	for _, s := range os.Environ() {
 		name, _, _ := strings.Cut(s, "=")
@@ -354,9 +400,5 @@ func Run(ctx context.Context, b Build, appID string, input io.Reader, out, errOu
 	if appID != "" {
 		env = append(env, "SteamAppId="+appID, "SteamGameId="+appID)
 	}
-	command.Env = env
-	if e := command.Run(); e != nil {
-		return fmt.Errorf("native SDK helper failed (see its JSON result or stderr): %w", e)
-	}
-	return nil
+	return env
 }

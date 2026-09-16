@@ -536,7 +536,6 @@ func TestASFBotsFlagAndDefaultSelector(t *testing.T) {
 	}
 }
 
-
 func TestOutputFormatValidation(t *testing.T) {
 	cleanEnv(t)
 	if _, err := execute(t, "--output", "nonsense", "id", "76561197960287930"); err == nil {

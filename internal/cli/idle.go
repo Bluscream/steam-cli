@@ -27,6 +27,9 @@ func idleCommand(o *options) *cobra.Command {
 			"If ASF is not configured, not running, or if --sdk is specified, the CLI falls back to\n" +
 			"running a background native Steamworks SDK session to idle the specified AppID.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if o.offline {
+				return fmt.Errorf("idling cannot enforce --offline")
+			}
 			s, err := o.settings()
 			if err != nil {
 				return err
@@ -113,4 +116,3 @@ func idleCommand(o *options) *cobra.Command {
 	root.AddCommand(stopCmd)
 	return root
 }
-

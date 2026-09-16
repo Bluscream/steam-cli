@@ -127,7 +127,6 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 	}
 	nickCmd.Flags().StringVarP(&nickBotFlag, "bot", "b", "", "ASF bot name to target if using ASF (default: matches logged-in user, else ASF)")
 
-
 	runClientCmd := &cobra.Command{
 		Use:   "run APPID",
 		Short: "Launch a game in the desktop Steam client",

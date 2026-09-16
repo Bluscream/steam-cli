@@ -85,3 +85,8 @@ Close Steam before writes. Local edits keep private backups and refuse ambiguous
 configuration files; `--force` explicitly overrides the running-client check.
 `branch set` records a preference only; `branch download` invokes managed SteamCMD.
 See the [handoff audit](AUDIT-2026-09-15.md) for changes, evidence, and limitations.
+
+## Native Steamworks
+
+Native SDK calls now use a generated C++17 helper while the main CLI remains CGO-free.
+See [the SDK guide](SDK.md) for setup, calls, sessions, buffers and callbacks.

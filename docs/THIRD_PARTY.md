@@ -5,7 +5,7 @@ nav_order: 4
 
 # Third-party provenance
 
-The application code in `cmd/` and `internal/` is released into the public domain under [the Unlicense](../LICENSE). No third-party repository source was pasted into those directories. Protocol conventions, endpoint names, and behavioral findings were researched against the sources in [RESEARCH.md](RESEARCH.md); they are not asserted to be newly invented algorithms.
+The application code in `cmd/` and `internal/` is released into the public domain under [the Unlicense](../LICENSE). The exception is the explicitly vendored nlohmann/json header under `internal/sdk/native`, described below. Protocol conventions, endpoint names, and behavioral findings were researched against the sources in [RESEARCH.md](RESEARCH.md); they are not asserted to be newly invented algorithms.
 
 Runtime-linked Go modules are pinned by `go.mod` / `go.sum` and copied by `go mod vendor`. Keep `vendor/` license files with any source redistribution and include applicable notices with binary distributions. The Go standard library and toolchain retain their own licenses.
 
@@ -41,3 +41,14 @@ SteamCMD is proprietary Valve software, fetched directly from Valve on demand. I
 The Unlicense covers this project's own code only. It does not and cannot relicense the vendored Go modules, the embedded xPaw catalog, Valve's SteamCMD, or anything else listed above; those keep their own terms, and their notices must travel with any redistribution.
 
 This project is not affiliated with, endorsed by, or sponsored by Valve Corporation. Steam, SteamCMD and the Steam logo are trademarks of Valve Corporation.
+
+## Native helper dependency
+
+`internal/sdk/native/json.hpp` is the unmodified nlohmann/json **v3.12.0** single
+header from [nlohmann/json](https://github.com/nlohmann/json/tree/v3.12.0), MIT
+licensed; its notice is `internal/sdk/native/LICENSE.json` and is also included in
+`DEPENDENCY_LICENSES.txt`. SHA-256:
+`aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63`.
+It is embedded as build input in the Go binary and compiled only into a locally
+built native helper. Valve SDK headers, metadata and native libraries are supplied
+locally by the user and retain Valve's terms; they are not redistributed here.

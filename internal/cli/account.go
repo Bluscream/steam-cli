@@ -282,4 +282,3 @@ func accountCommand(o *options) *cobra.Command {
 	root.AddCommand(listCmd, switchCmd, activeCmd, forgetCmd, editCmd, nameCmd, privacyCmd)
 	return root
 }
-

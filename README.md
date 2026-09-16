@@ -396,6 +396,23 @@ Commands that act on bots take a selector: a positional argument, the persistent
 
 `asf schema` retrieves `/swagger/ASF/swagger.json` from your instance, covering its version and plugins. Generic `asf call` reaches endpoints without requiring a CLI release. A response with `Success:false` prints its JSON and exits nonzero. The Web API and ASF are separate authentication domains.
 
+## Native Steamworks calls
+
+```sh
+steamcli sdk build --sdk-dir /path/to/sdk
+steamcli sdk methods GetSteamID
+steamcli sdk call ISteamUtils GetAppID --appid 480
+steamcli sdk call ISteamFriends GetFriendCount --appid 480 --args '[4]'
+steamcli sdk session --appid 480
+```
+
+This invokes Valve's native runtime through a generated helper, with persistent
+buffers/handles and manual callback polling. The main CLI stays CGO-free; building
+the helper once requires a C++17 compiler and your local Steamworks SDK. Steam
+must be running for client initialization, with access to the chosen app. See
+[the SDK guide](docs/SDK.md) for the protocol, struct layouts, game-server mode,
+platform validation, and application-specific callback/resource limits.
+
 ## Local metadata and output
 
 ```sh

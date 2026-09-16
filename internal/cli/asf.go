@@ -211,7 +211,6 @@ func asfCommand(o *options) *cobra.Command {
 	return root
 }
 
-
 func render2FA(o *options, w io.Writer, b []byte) bool {
 	lines, ok := asf.Parse(b)
 	if !ok || len(lines) == 0 {

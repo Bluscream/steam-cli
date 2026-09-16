@@ -3,13 +3,16 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"steamcli.local/steam/internal/sdk"
@@ -17,9 +20,11 @@ import (
 
 func sdkCommand(o *options) *cobra.Command {
 	var dir, library, compiler, appID string
+	var runTimeout time.Duration
 	root := &cobra.Command{Use: "sdk", Short: "Discover and invoke native Steamworks SDK methods"}
 	root.PersistentFlags().StringVar(&dir, "sdk-dir", os.Getenv("STEAM_SDK_DIR"), "Local SDK directory containing public/steam/steam_api.json")
 	root.PersistentFlags().StringVar(&library, "library", os.Getenv("STEAM_SDK_LIBRARY"), "Absolute path to a compatible native Steam API runtime")
+	root.PersistentFlags().DurationVar(&runTimeout, "run-timeout", 0, "Native subprocess time limit (0 = unlimited)")
 	root.PersistentFlags().StringVar(&appID, "appid", "", "AppID for native client initialization; requires Steam access to that app")
 	loaded := func() (sdk.Build, error) {
 		s, e := o.settings()
@@ -31,6 +36,9 @@ func sdkCommand(o *options) *cobra.Command {
 			return b, e
 		}
 		if library != "" {
+			if !filepath.IsAbs(library) {
+				return b, errors.New("--library must be an absolute path")
+			}
 			b.Library = library
 		}
 		return b, nil
@@ -88,6 +96,18 @@ func sdkCommand(o *options) *cobra.Command {
 		}
 		return o.print(cmd, b)
 	}}
+	run := func(cmd *cobra.Command, b sdk.Build, input io.Reader, out io.Writer) error {
+		if runTimeout < 0 {
+			return errors.New("--run-timeout must not be negative")
+		}
+		ctx := cmd.Context()
+		if runTimeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, runTimeout)
+			defer cancel()
+		}
+		return sdk.Run(ctx, b, appID, input, out, cmd.ErrOrStderr())
+	}
 	validate := func() error {
 		if o.offline {
 			return errors.New("native Steam sessions cannot enforce --offline; use sdk methods/schema/build for offline work")
@@ -116,7 +136,7 @@ func sdkCommand(o *options) *cobra.Command {
 			return fmt.Errorf("--args must be a JSON array: %w", e)
 		}
 		if values == nil {
-			values = []json.RawMessage{}
+			return errors.New("--args must be a JSON array, not null")
 		}
 		if len(values) != len(m.Params) {
 			return fmt.Errorf("%s expects %d arguments; use sdk methods to inspect their types", m.Symbol, len(m.Params))
@@ -135,9 +155,9 @@ func sdkCommand(o *options) *cobra.Command {
 		if e != nil {
 			return e
 		}
-		var output bytes.Buffer
-		runErr := sdk.Run(cmd.Context(), b, appID, input, &output, cmd.ErrOrStderr())
-		scanner := bufio.NewScanner(&output)
+		var output limitedNativeOutput
+		runErr := run(cmd, b, input, &output)
+		scanner := bufio.NewScanner(bytes.NewReader(output.Bytes()))
 		scanner.Buffer(make([]byte, 4096), 32<<20)
 		var result json.RawMessage
 		for scanner.Scan() {
@@ -184,9 +204,19 @@ func sdkCommand(o *options) *cobra.Command {
 		if !noInit {
 			input = io.MultiReader(strings.NewReader("{\"op\":\"init\"}\n"), input)
 		}
-		return sdk.Run(cmd.Context(), b, appID, input, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		return run(cmd, b, input, cmd.OutOrStdout())
 	}}
 	session.Flags().BoolVar(&noInit, "no-init", false, "Supply initialization explicitly in the JSON protocol (or inspect buffers/layout only)")
 	root.AddCommand(build, methods, reference, path, call, session)
 	return root
+}
+
+// One-shot calls should not accumulate unlimited output from a broken helper.
+type limitedNativeOutput struct{ bytes.Buffer }
+
+func (w *limitedNativeOutput) Write(b []byte) (int, error) {
+	if w.Len()+len(b) > 64<<20 {
+		return 0, errors.New("native reply exceeds 64 MiB")
+	}
+	return w.Buffer.Write(b)
 }

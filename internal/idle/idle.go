@@ -4,10 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strconv"
 	"strings"
 
 	"steamcli.local/steam/internal/account"
@@ -76,7 +72,10 @@ func (e *Engine) Start(ctx context.Context, appIDs []int, customText string, bot
 		return IdleResult{}, errors.New("idling requires at least one AppID when ASF is not configured")
 	}
 
-	// For native SDK, we launch an idle session using the first AppID
+	if len(appIDs) != 1 || customText != "" {
+		return IdleResult{}, errors.New("native SDK idling supports exactly one AppID and no custom text; use ASF for multiple apps or custom status")
+	}
+	// For native SDK, we launch one app session
 	appID := appIDs[0]
 	pid, err := e.startSDKIdle(ctx, appID)
 	if err != nil {
@@ -107,16 +106,14 @@ func (e *Engine) Stop(ctx context.Context, bot string) (string, error) {
 		}
 	}
 
-	// 2. Terminate background SDK PID if running
+	// Native helpers watch a private control file; never signal a reused PID.
 	if e.DataDir != "" {
-		pidFile := filepath.Join(e.DataDir, "idle.pid")
-		if b, err := os.ReadFile(pidFile); err == nil {
-			pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
-			if err == nil && pid > 0 {
-				terminatePID(pid)
-				_ = os.Remove(pidFile)
-				messages = append(messages, fmt.Sprintf("Stopped native SDK idle process (PID %d)", pid))
-			}
+		pid, stopped, err := sdk.StopIdle(e.DataDir)
+		if err != nil {
+			return "", err
+		}
+		if stopped {
+			messages = append(messages, fmt.Sprintf("Requested shutdown of native SDK idle session (PID %d)", pid))
 		}
 	}
 
@@ -131,31 +128,8 @@ func (e *Engine) startSDKIdle(ctx context.Context, appID int) (int, error) {
 		return 0, errors.New("native SDK helper is not built; run 'steamcli sdk build --sdk-dir <path>' or configure ASF")
 	}
 
-	pidFile := filepath.Join(e.DataDir, "idle.pid")
-	// Stop existing if running
-	if b, err := os.ReadFile(pidFile); err == nil {
-		if oldPID, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && oldPID > 0 {
-			terminatePID(oldPID)
-		}
+	if appID <= 0 || uint64(appID) > uint64(^uint32(0)) {
+		return 0, errors.New("AppID is outside uint32 range")
 	}
-
-	// Launch helper in background
-	cmd := exec.Command(e.Helper.Helper)
-	cmd.Env = append(os.Environ(), fmt.Sprintf("SteamAppId=%d", appID), fmt.Sprintf("STEAM_SDK_LIBRARY=%s", e.Helper.Library))
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return 0, err
-	}
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-
-	if err := cmd.Start(); err != nil {
-		return 0, err
-	}
-
-	// Send init operation
-	_, _ = stdin.Write([]byte("{\"op\":\"init\"}\n"))
-
-	_ = os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", cmd.Process.Pid)), 0o644)
-	return cmd.Process.Pid, nil
+	return sdk.StartIdle(ctx, e.Helper, e.DataDir, uint32(appID))
 }
