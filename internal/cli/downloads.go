@@ -114,11 +114,18 @@ func downloadsCommand(o *options) *cobra.Command {
 					totalCleared += cnt
 					totalFreed += freed
 
-					if validateCmd != nil {
+					// Only trigger client validation for items that actually have corruption or errors,
+					// avoiding disturbing other running downloads/validations in Steam.
+					if (it.Status == library.StatusCorrupt || it.Status == library.StatusError) && validateCmd != nil {
 						_ = validateCmd.RunE(cmd, []string{it.AppID})
 						validated = append(validated, it.AppID)
 					}
 				}
+
+				// Also clean any unmapped/empty staging directories and lingering patches in libraries
+				extraCnt, extraFreed := library.CleanLingeringArtifacts(r)
+				totalCleared += extraCnt
+				totalFreed += extraFreed
 
 				return o.emit(cmd, map[string]any{
 					"action":        "fix_all",
@@ -128,8 +135,13 @@ func downloadsCommand(o *options) *cobra.Command {
 					"app_count":     len(affectedAppIDs),
 					"validated":     validated,
 				}, func(w io.Writer) {
-					fmt.Fprintf(w, "%s Cleared %d corrupt/staging artifact(s) (%s freed) and triggered validation for %d app(s).\n",
-						green.Sprint("✓"), totalCleared, humanBytes(totalFreed), len(affectedAppIDs))
+					if len(validated) > 0 {
+						fmt.Fprintf(w, "%s Cleared %d corrupt/staging artifact(s) (%s freed) and triggered validation for %d app(s): %s.\n",
+							green.Sprint("✓"), totalCleared, humanBytes(totalFreed), len(validated), strings.Join(validated, ", "))
+					} else {
+						fmt.Fprintf(w, "%s Cleared %d corrupt/staging artifact(s) (%s freed) across %d download target(s).\n",
+							green.Sprint("✓"), totalCleared, humanBytes(totalFreed), len(affectedAppIDs))
+					}
 				})
 			}
 

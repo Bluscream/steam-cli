@@ -1731,9 +1731,17 @@ func TestDownloadsBatchActions(t *testing.T) {
 		t.Errorf("expected staging dir to be removed by batch stop")
 	}
 
-	// Recreate staging file and test batch --fix
+	// Recreate staging file and test batch --fix (with corrupted state)
 	_ = os.MkdirAll(dlDir, 0755)
 	_ = os.WriteFile(filepath.Join(dlDir, "staging2.bin"), []byte("data"), 0644)
+	mockManifestCorrupt := `"AppState" {
+		"appid" "227300"
+		"name" "Euro Truck Simulator 2"
+		"StateFlags" "130"
+		"UpdateResult" "5"
+	}`
+	_ = os.WriteFile(filepath.Join(steamapps, "appmanifest_227300.acf"), []byte(mockManifestCorrupt), 0644)
+
 	outFix, errFix := execute(t, "downloads", "--root", root, "--fix")
 	if errFix != nil {
 		t.Fatalf("batch fix failed: %v", errFix)

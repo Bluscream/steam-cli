@@ -245,13 +245,18 @@ func ScanDownloads(roots []string) (DownloadsReport, error) {
 					continue
 				}
 
+				// Check if this downloading folder actually has files (not just an empty folder)
+				appDlPath := filepath.Join(dlDir, appID)
+				subEntries, err := os.ReadDir(appDlPath)
+				hasFiles := (err == nil && len(subEntries) > 0)
+
 				key := "game:" + appID
 				if existing, exists := itemMap[key]; exists {
-					if existing.Status == StatusQueued || existing.Status == StatusCompleted {
+					if hasFiles && (existing.Status == StatusQueued || existing.Status == StatusCompleted) {
 						existing.Status = StatusActive
 					}
-				} else {
-					// Discovered in downloading/ folder without a queued manifest
+				} else if hasFiles {
+					// Discovered in downloading/ folder with actual staging files
 					name := "AppID " + appID
 					for _, a := range rep.Apps {
 						if a.AppID == appID {
@@ -693,5 +698,44 @@ func CleanDownloadArtifacts(roots []string, appID string) (int, int64, error) {
 	}
 
 	return removedCount, freedBytes, nil
+}
+
+// CleanLingeringArtifacts scans libraries for empty downloading folders or unmapped patches
+// that do not belong to active updates.
+func CleanLingeringArtifacts(roots []string) (int, int64) {
+	if len(roots) == 0 {
+		roots = Defaults()
+	}
+
+	rep, err := Scan(roots)
+	if err != nil {
+		return 0, 0
+	}
+
+	removed := 0
+	var freed int64
+
+	for _, lib := range rep.Libraries {
+		dlDir := filepath.Join(lib, "steamapps", "downloading")
+		entries, err := os.ReadDir(dlDir)
+		if err != nil {
+			continue
+		}
+
+		for _, de := range entries {
+			p := filepath.Join(dlDir, de.Name())
+			if de.IsDir() {
+				// If directory is empty, remove it
+				sub, err := os.ReadDir(p)
+				if err == nil && len(sub) == 0 {
+					if err := os.Remove(p); err == nil {
+						removed++
+					}
+				}
+			}
+		}
+	}
+
+	return removed, freed
 }
 
