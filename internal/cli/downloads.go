@@ -15,16 +15,30 @@ func downloadsCommand(o *options) *cobra.Command {
 	var roots []string
 	var filterStatus string
 	var watchInterval int
+	var doStop, doStart, doFix bool
 
 	cmd := &cobra.Command{
-		Use:     "downloads",
+		Use:     "downloads [APPID]",
 		Aliases: []string{"download", "dl", "queue"},
-		Short:   "View active, scheduled, paused, and corrupt Steam downloads",
+		Short:   "View or inspect active, scheduled, paused, and corrupt Steam downloads",
 		Long: "Inspect Steam downloads across local libraries, manifests, and cache directories.\n\n" +
-			"Discovers active downloading/staging files, queued game updates, scheduled\n" +
-			"auto-updates, paused transfers, workshop downloads, and disk/checksum error states.",
-		Args: cobra.NoArgs,
+			"Run without arguments to list all active, queued, scheduled, and corrupt downloads.\n" +
+			"Provide an APPID (e.g. steamcli download 227300) to inspect or repair a specific download.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				inspect := downloadInspectCommand(o)
+				if doStop {
+					_ = inspect.Flags().Set("stop", "true")
+				}
+				if doStart {
+					_ = inspect.Flags().Set("start", "true")
+				}
+				if doFix {
+					_ = inspect.Flags().Set("fix", "true")
+				}
+				return inspect.RunE(cmd, args)
+			}
 			r := roots
 			if len(r) == 0 {
 				r = library.Defaults()
@@ -150,6 +164,170 @@ func downloadsCommand(o *options) *cobra.Command {
 	cmd.Flags().StringArrayVar(&roots, "root", nil, "Steam root directory; repeat for multiple installations")
 	cmd.Flags().StringVarP(&filterStatus, "status", "s", "", "Filter by status: downloading, staging, committing, paused, queued, scheduled, corrupt, error")
 	cmd.Flags().IntVarP(&watchInterval, "interval", "i", 0, "Refresh interval in seconds (0 = run once)")
+	cmd.Flags().BoolVar(&doStop, "stop", false, "Purge staging directories and delta chunks without touching base game (requires APPID)")
+	cmd.Flags().BoolVar(&doStart, "start", false, "Trigger Steam client to resume/start downloading (requires APPID)")
+	cmd.Flags().BoolVar(&doFix, "fix", false, "Clear corrupt staging artifacts and trigger Steam to re-validate cleanly (requires APPID)")
+
+	cmd.AddCommand(downloadInspectCommand(o))
+
+	return cmd
+}
+
+func downloadInspectCommand(o *options) *cobra.Command {
+	var roots []string
+	var doStop bool
+	var doStart bool
+	var doFix bool
+
+	cmd := &cobra.Command{
+		Use:     "inspect APPID",
+		Aliases: []string{"info", "view", "get"},
+		Short:   "Detailed inspection, control, and repair for a specific download",
+		Long: "Inspect detailed download/update state, staging artifacts, and logs for an AppID.\n\n" +
+			"Flags:\n" +
+			"  --stop   Purge staging directories and delta chunks without touching installed game\n" +
+			"  --start  Trigger Steam client to resume or initiate download/update\n" +
+			"  --fix    Clear corrupt download staging artifacts and trigger Steam to re-validate cleanly",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			appID := strings.TrimSpace(args[0])
+			r := roots
+			if len(r) == 0 {
+				r = library.Defaults()
+			}
+
+			// Handle --stop
+			if doStop {
+				count, freed, err := library.CleanDownloadArtifacts(r, appID)
+				if err != nil {
+					return fmt.Errorf("cleaning artifacts: %w", err)
+				}
+				return o.emit(cmd, map[string]any{
+					"appid":          appID,
+					"action":         "stop",
+					"cleared_items":  count,
+					"freed_bytes":    freed,
+					"freed_human":    humanBytes(freed),
+				}, func(w io.Writer) {
+					fmt.Fprintf(w, "%s Removed %d staging artifact(s) for AppID %s (freed %s). Base game files preserved.\n",
+						green.Sprint("✓"), count, appID, humanBytes(freed))
+				})
+			}
+
+			// Handle --fix (clear artifacts + restart/revalidate)
+			if doFix {
+				count, freed, _ := library.CleanDownloadArtifacts(r, appID)
+				// Trigger validate via client launcher
+				client := clientCommand(o)
+				for _, c := range client.Commands() {
+					if c.Name() == "validate" {
+						_ = c.RunE(cmd, []string{appID})
+						break
+					}
+				}
+				return o.emit(cmd, map[string]any{
+					"appid":         appID,
+					"action":        "fix",
+					"cleared_items": count,
+					"freed_bytes":   freed,
+					"triggered":     "validate",
+				}, func(w io.Writer) {
+					fmt.Fprintf(w, "%s Cleared %d corrupt/staging artifact(s) (%s freed) and triggered validation for AppID %s.\n",
+						green.Sprint("✓"), count, humanBytes(freed), appID)
+				})
+			}
+
+			// Handle --start
+			if doStart {
+				client := clientCommand(o)
+				for _, c := range client.Commands() {
+					if c.Name() == "install" {
+						_ = c.RunE(cmd, []string{appID})
+						break
+					}
+				}
+				return o.emit(cmd, map[string]any{
+					"appid":     appID,
+					"action":    "start",
+					"triggered": "install",
+				}, func(w io.Writer) {
+					fmt.Fprintf(w, "%s Triggered Steam client to start/resume download for AppID %s.\n",
+						green.Sprint("✓"), appID)
+				})
+			}
+
+			// Default: view detailed information
+			detail, err := library.GetDownloadDetail(r, appID)
+			if err != nil {
+				return err
+			}
+
+			return o.emit(cmd, detail, func(w io.Writer) {
+				t := o.newDetail(w)
+				dlStr := "-"
+				if detail.Item.BytesDownloaded > 0 {
+					dlStr = humanBytes(detail.Item.BytesDownloaded)
+				}
+				totStr := "-"
+				if detail.Item.BytesTotal > 0 {
+					totStr = humanBytes(detail.Item.BytesTotal)
+				}
+				progStr := "-"
+				if detail.Item.BytesTotal > 0 {
+					progStr = fmt.Sprintf("%.1f%%", detail.Item.Progress)
+				}
+
+				flagsStr := "(none)"
+				if len(detail.StateFlagNames) > 0 {
+					flagsStr = strings.Join(detail.StateFlagNames, ", ")
+				}
+
+				schedStr := "(none)"
+				if detail.Item.ScheduledHuman != "" {
+					schedStr = detail.Item.ScheduledHuman
+				}
+
+				errStr := "(none)"
+				if detail.Item.ErrorDetail != "" {
+					errStr = red.Sprint(detail.Item.ErrorDetail)
+				}
+
+				artifactStr := fmt.Sprintf("%d dir(s), %d file(s) (%s)",
+					len(detail.StagingDirs), len(detail.StagingFiles), humanBytes(detail.TotalArtifactSz))
+
+				detailRows(t,
+					kv("AppID", detail.Item.AppID),
+					kv("Name", detail.Item.Name),
+					kv("Type", detail.Item.Type),
+					kv("Status", formatDownloadStatus(detail.Item.Status)),
+					kv("Progress", progStr),
+					kv("Downloaded", dlStr),
+					kv("Total", totStr),
+					kv("State Flags", fmt.Sprintf("%d (%s)", detail.StateFlagsRaw, flagsStr)),
+					kv("Update Error", errStr),
+					kv("Scheduled", schedStr),
+					kv("Library", detail.Item.Library),
+					kv("Manifest", detail.ManifestPath),
+					kv("Build ID", detail.BuildID),
+					kv("Target Build ID", detail.TargetBuildID),
+					kv("Staging Artifacts", artifactStr),
+				)
+				o.renderTable(t)
+
+				if len(detail.RecentLogs) > 0 {
+					o.heading(w, "Recent Log Entries (logs/content_log.txt)")
+					for _, l := range detail.RecentLogs {
+						fmt.Fprintf(w, "  %s\n", faint(l))
+					}
+				}
+			})
+		},
+	}
+
+	cmd.Flags().StringArrayVar(&roots, "root", nil, "Steam root directory; repeat for multiple installations")
+	cmd.Flags().BoolVar(&doStop, "stop", false, "Purge staging directories and delta chunks without touching base game")
+	cmd.Flags().BoolVar(&doStart, "start", false, "Trigger Steam client to resume/start downloading")
+	cmd.Flags().BoolVar(&doFix, "fix", false, "Clear corrupt staging artifacts and trigger Steam to re-validate cleanly")
 
 	return cmd
 }
@@ -174,3 +352,4 @@ func formatDownloadStatus(s library.DownloadStatus) string {
 		return strings.ToUpper(string(s))
 	}
 }
+

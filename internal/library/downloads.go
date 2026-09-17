@@ -476,3 +476,222 @@ func tailLines(r io.Reader, maxLines int) []string {
 	}
 	return ring
 }
+
+// DownloadDetail contains complete diagnostic context for one AppID.
+type DownloadDetail struct {
+	Item            DownloadItem `json:"item"`
+	ManifestPath    string       `json:"manifest_path,omitempty"`
+	StateFlagsRaw   int64        `json:"state_flags_raw"`
+	StateFlagNames  []string     `json:"state_flag_names"`
+	BuildID         string       `json:"build_id,omitempty"`
+	TargetBuildID   string       `json:"target_build_id,omitempty"`
+	BytesToStage    int64        `json:"bytes_to_stage,omitempty"`
+	BytesStaged     int64        `json:"bytes_staged,omitempty"`
+	AutoUpdate      string       `json:"auto_update_behavior,omitempty"`
+	StagingDirs     []string     `json:"staging_dirs,omitempty"`
+	StagingFiles    []string     `json:"staging_files,omitempty"`
+	TotalArtifactSz int64        `json:"total_artifact_size_bytes"`
+	RecentLogs      []string     `json:"recent_logs,omitempty"`
+}
+
+// StateFlagDescriptions maps StateFlags bits to human readable names.
+var StateFlagDescriptions = map[int64]string{
+	StateUninstalled:    "Uninstalled",
+	StateUpdateRequired: "UpdateRequired",
+	StateFullyInstalled: "FullyInstalled",
+	StateEncrypted:      "Encrypted",
+	StateLocked:         "Locked",
+	StateFilesMissing:   "FilesMissing",
+	StateAppRunning:     "AppRunning",
+	StateFilesCorrupt:   "FilesCorrupt",
+	StateUpdateRunning:  "UpdateRunning",
+	StateUpdatePaused:   "UpdatePaused",
+	StateUpdateStarted:  "UpdateStarted",
+	StateUninstalling:   "Uninstalling",
+	StateBackupRunning:  "BackupRunning",
+	StateReconfiguring:  "Reconfiguring",
+	StateValidating:     "Validating",
+	StateAddingFiles:    "AddingFiles",
+	StatePreallocating:  "Preallocating",
+	StateDownloading:    "Downloading",
+	StateStaging:        "Staging",
+	StateCommitting:     "Committing",
+	StateUpdateStopping: "UpdateStopping",
+}
+
+// GetDownloadDetail finds full details about a specific AppID across libraries.
+func GetDownloadDetail(roots []string, appID string) (*DownloadDetail, error) {
+	if len(roots) == 0 {
+		roots = Defaults()
+	}
+
+	rep, _ := ScanDownloads(roots)
+	var foundItem *DownloadItem
+	for _, it := range rep.All {
+		if it.AppID == appID {
+			itemCopy := it
+			foundItem = &itemCopy
+			break
+		}
+	}
+
+	detail := &DownloadDetail{
+		Item: DownloadItem{AppID: appID, Name: "AppID " + appID, Type: "game", Status: StatusCompleted},
+	}
+	if foundItem != nil {
+		detail.Item = *foundItem
+	}
+
+	// Inspect manifest
+	libRep, err := Scan(roots)
+	if err == nil {
+		for _, a := range libRep.Apps {
+			if a.AppID == appID {
+				detail.Item.Name = a.Name
+				detail.ManifestPath = a.Manifest
+				detail.Item.Library = a.Library
+				if m, err := parse(a.Manifest); err == nil {
+					if appState, ok := m["AppState"].(map[string]interface{}); ok {
+						detail.BuildID = str(appState["buildid"])
+						detail.TargetBuildID = str(appState["TargetBuildID"])
+						detail.AutoUpdate = str(appState["AutoUpdateBehavior"])
+						if s := str(appState["BytesToStage"]); s != "" {
+							detail.BytesToStage, _ = strconv.ParseInt(s, 10, 64)
+						}
+						if s := str(appState["BytesStaged"]); s != "" {
+							detail.BytesStaged, _ = strconv.ParseInt(s, 10, 64)
+						}
+						if s := str(appState["StateFlags"]); s != "" {
+							detail.StateFlagsRaw, _ = strconv.ParseInt(s, 10, 64)
+						}
+					}
+				}
+				break
+			}
+		}
+	}
+
+	// Deconstruct StateFlags
+	for bit, name := range StateFlagDescriptions {
+		if detail.StateFlagsRaw&bit != 0 {
+			detail.StateFlagNames = append(detail.StateFlagNames, name)
+		}
+	}
+	sort.Strings(detail.StateFlagNames)
+
+	// Inspect artifacts in downloading/ and shadercache
+	for _, lib := range libRep.Libraries {
+		dlAppDir := filepath.Join(lib, "steamapps", "downloading", appID)
+		if fi, err := os.Stat(dlAppDir); err == nil && fi.IsDir() {
+			detail.StagingDirs = append(detail.StagingDirs, dlAppDir)
+			_ = filepath.Walk(dlAppDir, func(path string, info os.FileInfo, err error) error {
+				if err == nil && !info.IsDir() {
+					detail.TotalArtifactSz += info.Size()
+				}
+				return nil
+			})
+		}
+
+		// Check .delta files matching this app or its depots
+		dlDir := filepath.Join(lib, "steamapps", "downloading")
+		deltas, _ := filepath.Glob(filepath.Join(dlDir, "*.delta"))
+		for _, d := range deltas {
+			if fi, err := os.Stat(d); err == nil {
+				// If delta filename contains appID
+				base := filepath.Base(d)
+				if strings.Contains(base, appID) {
+					detail.StagingFiles = append(detail.StagingFiles, d)
+					detail.TotalArtifactSz += fi.Size()
+				}
+			}
+		}
+
+		// Check workshop downloading
+		wsDir := filepath.Join(lib, "steamapps", "workshop", "downloads", appID)
+		if fi, err := os.Stat(wsDir); err == nil && fi.IsDir() {
+			detail.StagingDirs = append(detail.StagingDirs, wsDir)
+			_ = filepath.Walk(wsDir, func(path string, info os.FileInfo, err error) error {
+				if err == nil && !info.IsDir() {
+					detail.TotalArtifactSz += info.Size()
+				}
+				return nil
+			})
+		}
+
+		// Check shadercache downloads
+		scDir := filepath.Join(lib, "steamapps", "shadercache", appID, "downloads")
+		if fi, err := os.Stat(scDir); err == nil && fi.IsDir() {
+			detail.StagingDirs = append(detail.StagingDirs, scDir)
+			_ = filepath.Walk(scDir, func(path string, info os.FileInfo, err error) error {
+				if err == nil && !info.IsDir() {
+					detail.TotalArtifactSz += info.Size()
+				}
+				return nil
+			})
+		}
+	}
+
+	// Recent log mentions
+	for _, root := range roots {
+		contentLog := filepath.Join(root, "logs", "content_log.txt")
+		if f, err := os.Open(contentLog); err == nil {
+			scanner := bufio.NewScanner(f)
+			target := "AppID " + appID
+			for scanner.Scan() {
+				text := scanner.Text()
+				if strings.Contains(text, target) {
+					detail.RecentLogs = append(detail.RecentLogs, text)
+					if len(detail.RecentLogs) > 10 {
+						detail.RecentLogs = detail.RecentLogs[1:]
+					}
+				}
+			}
+			f.Close()
+		}
+	}
+
+	return detail, nil
+}
+
+// CleanDownloadArtifacts removes staging directories, delta files, and temporary cache
+// for an AppID without touching the game installation directory.
+func CleanDownloadArtifacts(roots []string, appID string) (int, int64, error) {
+	if len(roots) == 0 {
+		roots = Defaults()
+	}
+
+	detail, err := GetDownloadDetail(roots, appID)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	removedCount := 0
+	var freedBytes int64
+
+	for _, d := range detail.StagingDirs {
+		var sz int64
+		_ = filepath.Walk(d, func(_ string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() {
+				sz += info.Size()
+			}
+			return nil
+		})
+		if err := os.RemoveAll(d); err == nil {
+			removedCount++
+			freedBytes += sz
+		}
+	}
+
+	for _, f := range detail.StagingFiles {
+		if fi, err := os.Stat(f); err == nil {
+			sz := fi.Size()
+			if err := os.Remove(f); err == nil {
+				removedCount++
+				freedBytes += sz
+			}
+		}
+	}
+
+	return removedCount, freedBytes, nil
+}
+
