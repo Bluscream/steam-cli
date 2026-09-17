@@ -162,6 +162,7 @@ func scalar(raw json.RawMessage) (string, bool) {
 type BotSummary struct {
 	Name           string
 	SteamID        string
+	Nickname       string
 	Connected      bool
 	Farming        bool
 	GamesRemaining int
@@ -212,6 +213,7 @@ func Bots(b []byte) ([]BotSummary, bool) {
 		out = append(out, BotSummary{
 			Name:           r.BotName,
 			SteamID:        r.SteamID,
+			Nickname:       r.Nickname,
 			Connected:      r.Connected,
 			Farming:        r.CardsFarmer.NowFarming,
 			GamesRemaining: len(r.CardsFarmer.GamesToFarm),

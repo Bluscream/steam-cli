@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -67,24 +68,47 @@ func accountCommand(o *options) *cobra.Command {
 				return err
 			}
 
-			// Try matching ASF bots to accounts by SteamID
-			asfBotMap := make(map[string]string)
+			// Try matching ASF bots to accounts by SteamID and merge remote bots
+			matchedBots := make(map[string]bool)
+			var allBots []asf.BotSummary
 			if asfc, err := asfClient(); err == nil {
 				if b, err := asfc.Call(cmd.Context(), "GET", "Api/Bot/ASF", nil, nil); err == nil {
 					if summaries, ok := asf.Bots(b); ok {
-						for _, bot := range summaries {
-							if bot.SteamID != "" {
-								asfBotMap[bot.SteamID] = bot.Name
-							}
-						}
+						allBots = summaries
 					}
 				}
 			}
 
 			for i := range users {
-				if botName, ok := asfBotMap[users[i].SteamID64]; ok {
-					users[i].ASFBot = botName
+				for _, bot := range allBots {
+					if (bot.SteamID != "" && bot.SteamID != "0" && bot.SteamID == users[i].SteamID64) ||
+						strings.EqualFold(bot.Name, users[i].AccountName) {
+						users[i].ASFBot = bot.Name
+						matchedBots[bot.Name] = true
+						break
+					}
 				}
+			}
+
+			// Merge in ASF bots that are not logged into the local PC
+			for _, bot := range allBots {
+				if matchedBots[bot.Name] {
+					continue
+				}
+				steamID := bot.SteamID
+				if steamID == "0" {
+					steamID = ""
+				}
+				persona := bot.Nickname
+				if persona == "" {
+					persona = bot.Name
+				}
+				users = append(users, account.User{
+					SteamID64:   steamID,
+					AccountName: bot.Name,
+					PersonaName: persona,
+					ASFBot:      bot.Name,
+				})
 			}
 
 			return o.emit(cmd, users, func(w io.Writer) {
