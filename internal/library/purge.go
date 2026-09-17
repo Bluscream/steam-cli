@@ -29,6 +29,95 @@ type PurgeResult struct {
 	ClientNotified bool             `json:"client_notified"`
 }
 
+// Merge combines another PurgeResult into r.
+func (r *PurgeResult) Merge(other *PurgeResult) {
+	if other == nil {
+		return
+	}
+	r.Artifacts = append(r.Artifacts, other.Artifacts...)
+	r.TotalBytes += other.TotalBytes
+	r.TotalFiles += other.TotalFiles
+	r.Errors = append(r.Errors, other.Errors...)
+}
+
+// AddArtifact appends a purged artifact and updates totals.
+func (r *PurgeResult) AddArtifact(art PurgedArtifact) {
+	r.Artifacts = append(r.Artifacts, art)
+	r.TotalBytes += art.BytesFreed
+	if art.BytesFreed > 0 {
+		r.TotalFiles++
+	}
+}
+
+// ResolveLibraryRoots returns a deduplicated list of all library and steam root paths.
+func ResolveLibraryRoots(roots []string) []string {
+	if len(roots) == 0 {
+		roots = Defaults()
+	}
+	rep, err := Scan(roots)
+	var libraries []string
+	if err == nil {
+		libraries = rep.Libraries
+	}
+	seen := make(map[string]bool)
+	var out []string
+	for _, l := range append(libraries, roots...) {
+		clean := filepath.Clean(l)
+		if !seen[clean] {
+			seen[clean] = true
+			out = append(out, clean)
+		}
+	}
+	return out
+}
+
+// ResolveSteamappsDir returns the steamapps directory for a library path, or empty if invalid.
+func ResolveSteamappsDir(lib string) string {
+	steamapps := filepath.Join(lib, "steamapps")
+	if _, err := os.Stat(steamapps); err == nil {
+		return steamapps
+	}
+	if filepath.Base(lib) == "steamapps" {
+		return lib
+	}
+	return ""
+}
+
+// DeleteSafeArtifacts validates candidates with safety checks, calculates freed space,
+// deletes safe paths, and registers them to result.
+func DeleteSafeArtifacts(result *PurgeResult, candidates []PurgedArtifact) {
+	seenPaths := make(map[string]bool)
+	var safeTargets []PurgedArtifact
+
+	for _, t := range candidates {
+		clean := filepath.Clean(t.Path)
+		if seenPaths[clean] {
+			continue
+		}
+		seenPaths[clean] = true
+
+		if !isSafePurgePath(clean) {
+			result.Errors = append(result.Errors, fmt.Sprintf("refusing to purge dangerous path: %s", clean))
+			continue
+		}
+
+		sz, cnt := calculateDirSize(clean)
+		t.Path = clean
+		t.BytesFreed = sz
+		result.TotalBytes += sz
+		result.TotalFiles += cnt
+		safeTargets = append(safeTargets, t)
+	}
+
+	for _, t := range safeTargets {
+		if err := os.RemoveAll(t.Path); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("failed to remove %s: %v", t.Path, err))
+		} else {
+			result.Artifacts = append(result.Artifacts, t)
+		}
+	}
+}
+
 // calculateDirSize computes the total byte size and file count of a file or directory tree.
 func calculateDirSize(path string) (int64, int) {
 	fi, err := os.Lstat(path)
@@ -66,29 +155,8 @@ func PurgeAppFiles(roots []string, appID string, installDirHint string, purgeNon
 		return nil, fmt.Errorf("invalid appID %q: must be positive integer", appID)
 	}
 
-	if len(roots) == 0 {
-		roots = Defaults()
-	}
-
+	libraries := ResolveLibraryRoots(roots)
 	rep, err := Scan(roots)
-	var libraries []string
-	if err == nil {
-		libraries = rep.Libraries
-	}
-	// Always include the roots themselves as candidate libraries/steam homes
-	seenLibs := make(map[string]bool)
-	for _, l := range libraries {
-		clean := filepath.Clean(l)
-		seenLibs[clean] = true
-		libraries = append(libraries, clean)
-	}
-	for _, r := range roots {
-		clean := filepath.Clean(r)
-		if !seenLibs[clean] {
-			seenLibs[clean] = true
-			libraries = append(libraries, clean)
-		}
-	}
 
 	result := &PurgeResult{
 		AppID: appID,
@@ -125,14 +193,9 @@ func PurgeAppFiles(roots []string, appID string, installDirHint string, purgeNon
 
 	// 2. Scan every library folder
 	for _, lib := range libraries {
-		steamapps := filepath.Join(lib, "steamapps")
-		if _, err := os.Stat(steamapps); err != nil {
-			// Maybe lib itself is steamapps?
-			if filepath.Base(lib) == "steamapps" {
-				steamapps = lib
-			} else {
-				continue
-			}
+		steamapps := ResolveSteamappsDir(lib)
+		if steamapps == "" {
+			continue
 		}
 
 		// App manifest(s) and temporary manifest files
@@ -273,6 +336,7 @@ func PurgeAppFiles(roots []string, appID string, installDirHint string, purgeNon
 	}
 
 	// 3. Check Steam root directories for userdata, appcache, and librarycache
+	roots = ResolveLibraryRoots(roots)
 	for _, root := range roots {
 		// userdata/<steamid>/<appid>
 		userPattern := filepath.Join(root, "userdata", "*", appID)
@@ -334,50 +398,54 @@ func PurgeAppFiles(roots []string, appID string, installDirHint string, purgeNon
 
 		home, _ := os.UserHomeDir()
 		if home != "" {
-			// Search locations for native/wine game saves and configs:
-			// - ~/.config/<GameName>
-			// - ~/.local/share/<GameName>
-			// - ~/Documents/<GameName>
-			// - ~/Saved Games/<GameName>
-			// - ~/.wine/drive_c/users/*/Saved Games/<GameName>
-			// - ~/.var/app/*/data/<GameName> (Flatpak sandbox app data)
 			searchRoots := []string{
 				filepath.Join(home, ".config"),
 				filepath.Join(home, ".local", "share"),
 				filepath.Join(home, "Documents"),
+				filepath.Join(home, "Documents", "My Games"),
 				filepath.Join(home, "Saved Games"),
-				filepath.Join(home, ".var", "app"),
+				filepath.Join(home, "AppData", "Roaming"),
+				filepath.Join(home, "AppData", "Local"),
+				filepath.Join(home, "AppData", "LocalLow"),
 			}
 
-			// Add Windows / Wine user directories if on Windows
-			appData := os.Getenv("APPDATA")
-			if appData != "" {
-				searchRoots = append(searchRoots, appData)
+			// Wine user directory search
+			wineUsers := filepath.Join(home, ".wine", "drive_c", "users", "*", "Saved Games")
+			if wineMatches, err := filepath.Glob(wineUsers); err == nil {
+				searchRoots = append(searchRoots, wineMatches...)
 			}
-			localAppData := os.Getenv("LOCALAPPDATA")
-			if localAppData != "" {
-				searchRoots = append(searchRoots, localAppData)
+			wineDocs := filepath.Join(home, ".wine", "drive_c", "users", "*", "Documents")
+			if wineMatches, err := filepath.Glob(wineDocs); err == nil {
+				searchRoots = append(searchRoots, wineMatches...)
 			}
-			userProfile := os.Getenv("USERPROFILE")
-			if userProfile != "" {
-				searchRoots = append(searchRoots, filepath.Join(userProfile, "Saved Games"))
-				searchRoots = append(searchRoots, filepath.Join(userProfile, "Documents"))
+			wineMyGames := filepath.Join(home, ".wine", "drive_c", "users", "*", "Documents", "My Games")
+			if wineMatches, err := filepath.Glob(wineMyGames); err == nil {
+				searchRoots = append(searchRoots, wineMatches...)
 			}
 
-			seenCandidates := make(map[string]bool)
-			for _, name := range candidateNames {
-				cleanName := strings.TrimSpace(name)
-				if cleanName == "" || len(cleanName) < 3 || seenCandidates[strings.ToLower(cleanName)] {
+			// Flatpak sandbox app data search
+			flatpakPattern := filepath.Join(home, ".var", "app", "*", "data")
+			if flatpakMatches, err := filepath.Glob(flatpakPattern); err == nil {
+				searchRoots = append(searchRoots, flatpakMatches...)
+			}
+			flatpakConfig := filepath.Join(home, ".var", "app", "*", "config")
+			if flatpakMatches, err := filepath.Glob(flatpakConfig); err == nil {
+				searchRoots = append(searchRoots, flatpakMatches...)
+			}
+
+			seenNames := make(map[string]bool)
+			for _, n := range candidateNames {
+				cleanName := strings.TrimSpace(n)
+				if cleanName == "" || len(cleanName) < 2 || seenNames[cleanName] {
 					continue
 				}
-				seenCandidates[strings.ToLower(cleanName)] = true
+				seenNames[cleanName] = true
 
 				for _, searchDir := range searchRoots {
 					if _, err := os.Stat(searchDir); err != nil {
 						continue
 					}
 
-					// Direct match
 					exactPath := filepath.Join(searchDir, cleanName)
 					if _, err := os.Lstat(exactPath); err == nil {
 						candidateTargets = append(candidateTargets, PurgedArtifact{
@@ -387,7 +455,6 @@ func PurgeAppFiles(roots []string, appID string, installDirHint string, purgeNon
 						})
 					}
 
-					// Case-insensitive match in searchDir
 					entries, err := os.ReadDir(searchDir)
 					if err == nil {
 						for _, de := range entries {
@@ -406,40 +473,7 @@ func PurgeAppFiles(roots []string, appID string, installDirHint string, purgeNon
 		}
 	}
 
-	// Deduplicate targets by normalized path and apply strict safety guard
-	seenPaths := make(map[string]bool)
-	var safeTargets []PurgedArtifact
-
-	for _, t := range candidateTargets {
-		clean := filepath.Clean(t.Path)
-		if seenPaths[clean] {
-			continue
-		}
-		seenPaths[clean] = true
-
-		if !isSafePurgePath(clean) {
-			result.Errors = append(result.Errors, fmt.Sprintf("refusing to purge dangerous path: %s", clean))
-			continue
-		}
-
-		sz, cnt := calculateDirSize(clean)
-		t.Path = clean
-		t.BytesFreed = sz
-		result.TotalBytes += sz
-		result.TotalFiles += cnt
-		safeTargets = append(safeTargets, t)
-	}
-
-	// Now delete all safe targets
-	for _, t := range safeTargets {
-		err := os.RemoveAll(t.Path)
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("failed to remove %s: %v", t.Path, err))
-		} else {
-			result.Artifacts = append(result.Artifacts, t)
-		}
-	}
-
+	DeleteSafeArtifacts(result, candidateTargets)
 	return result, nil
 }
 
@@ -454,28 +488,7 @@ func PurgeWorkshopItem(roots []string, itemID string) (*PurgeResult, error) {
 		return nil, fmt.Errorf("invalid workshop itemID %q: must be positive integer", itemID)
 	}
 
-	if len(roots) == 0 {
-		roots = Defaults()
-	}
-
-	rep, err := Scan(roots)
-	var libraries []string
-	if err == nil {
-		libraries = rep.Libraries
-	}
-	seenLibs := make(map[string]bool)
-	for _, l := range libraries {
-		clean := filepath.Clean(l)
-		seenLibs[clean] = true
-		libraries = append(libraries, clean)
-	}
-	for _, r := range roots {
-		clean := filepath.Clean(r)
-		if !seenLibs[clean] {
-			seenLibs[clean] = true
-			libraries = append(libraries, clean)
-		}
-	}
+	libraries := ResolveLibraryRoots(roots)
 
 	result := &PurgeResult{
 		AppID: itemID,
@@ -486,13 +499,13 @@ func PurgeWorkshopItem(roots []string, itemID string) (*PurgeResult, error) {
 	var manifestsToUpdate []string
 
 	for _, lib := range libraries {
-		workshopDir := filepath.Join(lib, "steamapps", "workshop")
+		steamapps := ResolveSteamappsDir(lib)
+		if steamapps == "" {
+			continue
+		}
+		workshopDir := filepath.Join(steamapps, "workshop")
 		if _, err := os.Stat(workshopDir); err != nil {
-			if filepath.Base(lib) == "workshop" {
-				workshopDir = lib
-			} else {
-				continue
-			}
+			continue
 		}
 
 		// 1. Content: steamapps/workshop/content/*/<itemID>
@@ -538,34 +551,7 @@ func PurgeWorkshopItem(roots []string, itemID string) (*PurgeResult, error) {
 		}
 	}
 
-	seenPaths := make(map[string]bool)
-	var safeTargets []PurgedArtifact
-	for _, t := range candidateTargets {
-		clean := filepath.Clean(t.Path)
-		if seenPaths[clean] {
-			continue
-		}
-		seenPaths[clean] = true
-		if !isSafePurgePath(clean) {
-			result.Errors = append(result.Errors, fmt.Sprintf("refusing to purge dangerous path: %s", clean))
-			continue
-		}
-		sz, cnt := calculateDirSize(clean)
-		t.Path = clean
-		t.BytesFreed = sz
-		result.TotalBytes += sz
-		result.TotalFiles += cnt
-		safeTargets = append(safeTargets, t)
-	}
-
-	for _, t := range safeTargets {
-		err := os.RemoveAll(t.Path)
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("failed to remove %s: %v", t.Path, err))
-		} else {
-			result.Artifacts = append(result.Artifacts, t)
-		}
-	}
+	DeleteSafeArtifacts(result, candidateTargets)
 
 	// Remove item entry from appworkshop manifests
 	for _, acf := range manifestsToUpdate {
@@ -624,6 +610,33 @@ func removeWorkshopItemFromACF(path, itemID string) error {
 		return steamvdf.Write(path, m)
 	}
 	return nil
+}
+
+// IsWorkshopItemID checks if the given id represents a workshop item in any library.
+func IsWorkshopItemID(roots []string, id string) bool {
+	if _, err := strconv.ParseUint(id, 10, 64); err != nil {
+		return false
+	}
+	libraries := ResolveLibraryRoots(roots)
+	for _, lib := range libraries {
+		steamapps := ResolveSteamappsDir(lib)
+		if steamapps == "" {
+			continue
+		}
+		// Check content/<appID>/<id> or downloads/<id>
+		matches, err := filepath.Glob(filepath.Join(steamapps, "workshop", "content", "*", id))
+		if err == nil && len(matches) > 0 {
+			return true
+		}
+		dlMatches, err := filepath.Glob(filepath.Join(steamapps, "workshop", "downloads", "*", id))
+		if err == nil && len(dlMatches) > 0 {
+			return true
+		}
+		if _, err := os.Stat(filepath.Join(steamapps, "workshop", "downloads", id)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // FindDLCBaseGame checks if the given dlcAppID is a registered DLC under any installed game.

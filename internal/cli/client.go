@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -196,9 +195,8 @@ func newUninstallCommand(o *options, clientRun func(cmd *cobra.Command, args []s
 				}
 
 				// Check if arg is a Workshop Item ID
-				if isWorkshopItemID(r, arg) {
+				if library.IsWorkshopItemID(r, arg) {
 					if !force && !purge {
-						// In non-force mode, ask if they want to force or unsubscribe
 						fmt.Fprintf(cmd.ErrOrStderr(), "%s %q identified as Workshop Item %s. Use --force to purge its files.\n",
 							yellow.Sprint("Notice:"), arg, arg)
 						continue
@@ -208,10 +206,7 @@ func newUninstallCommand(o *options, clientRun func(cmd *cobra.Command, args []s
 						combinedResult.Errors = append(combinedResult.Errors, fmt.Sprintf("workshop item %s: %v", arg, err))
 						continue
 					}
-					combinedResult.Artifacts = append(combinedResult.Artifacts, purgeRes.Artifacts...)
-					combinedResult.TotalBytes += purgeRes.TotalBytes
-					combinedResult.TotalFiles += purgeRes.TotalFiles
-					combinedResult.Errors = append(combinedResult.Errors, purgeRes.Errors...)
+					combinedResult.Merge(purgeRes)
 					targetSummaries = append(targetSummaries, fmt.Sprintf("Workshop Item %s", arg))
 					continue
 				}
@@ -223,10 +218,7 @@ func newUninstallCommand(o *options, clientRun func(cmd *cobra.Command, args []s
 						combinedResult.Errors = append(combinedResult.Errors, fmt.Sprintf("DLC %s (base %s): %v", arg, baseID, err))
 						continue
 					}
-					combinedResult.Artifacts = append(combinedResult.Artifacts, purgeRes.Artifacts...)
-					combinedResult.TotalBytes += purgeRes.TotalBytes
-					combinedResult.TotalFiles += purgeRes.TotalFiles
-					combinedResult.Errors = append(combinedResult.Errors, purgeRes.Errors...)
+					combinedResult.Merge(purgeRes)
 					targetSummaries = append(targetSummaries, fmt.Sprintf("DLC %s (%s)", arg, baseName))
 					continue
 				}
@@ -279,11 +271,7 @@ func newUninstallCommand(o *options, clientRun func(cmd *cobra.Command, args []s
 					purgeRes.Name = resolvedName
 				}
 				purgeRes.ClientNotified = clientNotified
-
-				combinedResult.Artifacts = append(combinedResult.Artifacts, purgeRes.Artifacts...)
-				combinedResult.TotalBytes += purgeRes.TotalBytes
-				combinedResult.TotalFiles += purgeRes.TotalFiles
-				combinedResult.Errors = append(combinedResult.Errors, purgeRes.Errors...)
+				combinedResult.Merge(purgeRes)
 
 				label := appID
 				if purgeRes.Name != "" {
@@ -349,32 +337,6 @@ func newUninstallCommand(o *options, clientRun func(cmd *cobra.Command, args []s
 	cmd.Flags().StringVar(&installDirHint, "dir", "", "Explicit game installation directory path if not discoverable via manifest")
 
 	return cmd
-}
-
-func isWorkshopItemID(roots []string, id string) bool {
-	if _, err := strconv.ParseUint(id, 10, 64); err != nil {
-		return false
-	}
-	rep, err := library.Scan(roots)
-	var libraries []string
-	if err == nil {
-		libraries = rep.Libraries
-	}
-	for _, r := range roots {
-		libraries = append(libraries, r)
-	}
-	for _, lib := range libraries {
-		// Check if content/<appID>/<id> or downloads/<id> exists
-		matches, err := filepath.Glob(filepath.Join(lib, "steamapps", "workshop", "content", "*", id))
-		if err == nil && len(matches) > 0 {
-			return true
-		}
-		dlMatches, err := filepath.Glob(filepath.Join(lib, "steamapps", "workshop", "downloads", "*", id))
-		if err == nil && len(dlMatches) > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 
