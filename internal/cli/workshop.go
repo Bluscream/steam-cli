@@ -251,6 +251,64 @@ func workshopCommand(o *options) *cobra.Command {
 	collection.Flags().BoolVar(&withItemDetails, "items", true, "Fetch full metadata for all items in the collection")
 	collection.Flags().BoolVar(&idsOnly, "ids-only", false, "Output only child item IDs, one per line")
 
+	// Info for individual items
+	infoCmd := &cobra.Command{
+		Use:     "info ITEMID...",
+		Aliases: []string{"item", "details"},
+		Short:   "View metadata and details for one or more Workshop items",
+		Args:    cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			wc, err := workshopClient()
+			if err != nil {
+				return err
+			}
+			details, err := wc.GetDetails(cmd.Context(), args)
+			if err != nil {
+				return err
+			}
+			var items []workshop.PublishedFileDetails
+			for _, id := range args {
+				if d, ok := details[id]; ok {
+					items = append(items, d)
+				}
+			}
+			if len(items) == 1 {
+				it := items[0]
+				return o.emit(cmd, it, func(w io.Writer) {
+					t := o.newDetail(w)
+					detailRows(t,
+						kv("Title", it.Title),
+						kv("ID", it.PublishedFileID),
+						kv("Creator", it.Creator),
+						kv("AppID", fmt.Sprint(it.ConsumerAppID)),
+						kv("Subscriptions", thousands(it.Subscriptions)),
+						kv("Favorites", thousands(it.Favorites)),
+						kv("Views", thousands(it.Views)),
+						kv("Updated", unixDate(it.TimeUpdated)),
+						kv("URL", "https://steamcommunity.com/sharedfiles/filedetails/?id="+it.PublishedFileID),
+					)
+					o.renderTable(t)
+					if it.Description != "" {
+						fmt.Fprintf(w, "\n%s\n", truncate(it.Description, 500))
+					}
+				})
+			}
+			return o.emit(cmd, items, func(w io.Writer) {
+				t := o.newTable(w)
+				t.AppendHeader(table.Row{"ID", "Title", "Subscribers", "Favorites", "Updated"})
+				t.SetColumnConfigs([]table.ColumnConfig{
+					{Number: 3, Align: text.AlignRight, Transformer: o.numberT()},
+					{Number: 4, Align: text.AlignRight, Transformer: o.numberT()},
+				})
+				for _, it := range items {
+					t.AppendRow(table.Row{it.PublishedFileID, truncate(it.Title, 48),
+						it.Subscriptions, it.Favorites, unixDate(it.TimeUpdated)})
+				}
+				o.renderTable(t)
+			})
+		},
+	}
+
 	// 4. Subscriptions and favorites, as Steam records them
 	listCmd := func(use, filter, short string, aliases []string) *cobra.Command {
 		var listDetails bool
@@ -623,7 +681,7 @@ func workshopCommand(o *options) *cobra.Command {
 	}
 	deleteColl.Flags().BoolVar(&confirmDelete, "yes", false, "Confirm the deletion")
 
-	root.AddCommand(sub, unsub, collection, subsCmd, favsCmd, installedCmd, searchCmd, listColls,
+	root.AddCommand(infoCmd, sub, unsub, collection, subsCmd, favsCmd, installedCmd, searchCmd, listColls,
 		createColl, editColl, addItems, removeItems, deleteColl)
 	return root
 }
