@@ -71,22 +71,134 @@ func (o *options) newDetail(w io.Writer) table.Writer {
 	return t
 }
 
+// termWidth returns the current terminal column count.
+// It checks $COLUMNS first, then queries the tty, and returns 0 when the
+// output is piped / non-interactive (callers treat 0 as "no limit").
+func termWidth(w io.Writer) int {
+	if n, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && n > 0 {
+		return n
+	}
+	if f, ok := w.(*os.File); ok {
+		if c, _, err := term.GetSize(int(f.Fd())); err == nil && c > 0 {
+			return c
+		}
+	}
+	return 0
+}
+
+func (o *options) flexCol(colNum, width int) table.ColumnConfig {
+	if o.format == "csv" {
+		return table.ColumnConfig{Number: colNum}
+	}
+	if width < 10 {
+		width = 10
+	}
+	if o.maxColLength >= 0 && width > o.maxColLength {
+		width = o.maxColLength
+	}
+	return table.ColumnConfig{
+		Number:           colNum,
+		WidthMax:         width,
+		WidthMaxEnforcer: text.WrapText,
+	}
+}
+
+// FlexColSpec defines a flexible column with its column number (1-based),
+// minimum width, and relative ratio of available space.
+type FlexColSpec struct {
+	Number   int
+	MinWidth int
+	Ratio    int
+}
+
+// distributeFlexCols computes ColumnConfigs for a set of flexible columns,
+// splitting the available space (terminal width minus fixedCost) according to their ratios.
+// If terminal width is unknown or small, it falls back to MinWidth.
+func (o *options) distributeFlexCols(w io.Writer, fixedCost int, specs ...FlexColSpec) []table.ColumnConfig {
+	if len(specs) == 0 {
+		return nil
+	}
+	totalRatio := 0
+	totalMin := 0
+	for _, s := range specs {
+		r := s.Ratio
+		if r <= 0 {
+			r = 1
+		}
+		totalRatio += r
+		minW := s.MinWidth
+		if minW <= 0 {
+			minW = 10
+		}
+		totalMin += minW
+	}
+
+	cols := termWidth(w)
+	available := 0
+	if cols > 0 {
+		available = cols - fixedCost
+	}
+
+	configs := make([]table.ColumnConfig, len(specs))
+	if available <= totalMin {
+		for i, s := range specs {
+			minW := s.MinWidth
+			if minW <= 0 {
+				minW = 10
+			}
+			configs[i] = o.flexCol(s.Number, minW)
+		}
+		return configs
+	}
+
+	remaining := available
+	for i, s := range specs {
+		if i == len(specs)-1 {
+			configs[i] = o.flexCol(s.Number, remaining)
+			break
+		}
+		r := s.Ratio
+		if r <= 0 {
+			r = 1
+		}
+		wCol := (available * r) / totalRatio
+		minW := s.MinWidth
+		if minW <= 0 {
+			minW = 10
+		}
+		if wCol < minW {
+			wCol = minW
+		}
+		remaining -= wCol
+		configs[i] = o.flexCol(s.Number, wCol)
+	}
+
+	return configs
+}
+
+// flexColConfig returns a ColumnConfig for a single "flexible" (wrappable) column —
+// one whose content (titles, paths, descriptions) should word-wrap rather
+// than cause the table to overflow.
+func (o *options) flexColConfig(w io.Writer, colNum, fixedCost int) table.ColumnConfig {
+	const minWidth = 10
+	cols := termWidth(w)
+	available := 80
+	if cols > 0 {
+		available = cols - fixedCost
+		if available < minWidth {
+			available = minWidth
+		}
+	}
+	return o.flexCol(colNum, available)
+}
+
 // detailWidth returns the room a detail table's value column has, or 0 when the
 // output is not a terminal and should not be wrapped at all.
 func (o *options) detailWidth(w io.Writer) int {
 	if o.format == "csv" {
 		return 0
 	}
-	cols := 0
-	// An explicit COLUMNS wins, so output piped into a pager can still be
-	// wrapped to the width the user actually has.
-	if n, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && n > 0 {
-		cols = n
-	} else if f, ok := w.(*os.File); ok {
-		if c, _, err := term.GetSize(int(f.Fd())); err == nil {
-			cols = c
-		}
-	}
+	cols := termWidth(w)
 	if cols <= 0 {
 		return 0
 	}

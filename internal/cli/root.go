@@ -26,6 +26,7 @@ var Version = "0.1.0-dev"
 
 type options struct {
 	configPath, profile, format, color string
+	maxColLength                       int
 	timeout                            time.Duration
 	offline, allowHTTP, withHeader     bool
 
@@ -36,7 +37,7 @@ type options struct {
 }
 
 func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
-	o := &options{withHeader: true}
+	o := &options{withHeader: true, maxColLength: 100}
 	r := &cobra.Command{Use: "steamcli", Short: "Private Steam toolkit: Web API, SteamCMD, ASF, and local libraries", Version: Version, SilenceUsage: true, SilenceErrors: true}
 	r.SetIn(in)
 	r.SetOut(out)
@@ -45,6 +46,7 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 	f.StringVar(&o.configPath, "config", "", "Configuration JSON path")
 	f.StringVar(&o.profile, "profile", "", "Named configuration profile")
 	f.StringVarP(&o.format, "output", "o", "auto", "Output: auto, table, json, compact, raw, short, csv")
+	f.IntVar(&o.maxColLength, "max-column-length", 100, "Maximum width for table columns (-1 for uncapped)")
 	f.BoolVar(&o.withHeader, "with-header", true, "Include header row in tabular/CSV output")
 	f.DurationVar(&o.timeout, "timeout", 30*time.Second, "Timeout per HTTP attempt (not game downloads)")
 	f.BoolVar(&o.offline, "offline", false, "Disable network and external SteamCMD execution; use cached metadata")

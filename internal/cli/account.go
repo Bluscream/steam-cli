@@ -90,12 +90,18 @@ func accountCommand(o *options) *cobra.Command {
 			return o.emit(cmd, users, func(w io.Writer) {
 				t := o.newTable(w)
 				t.AppendHeader(table.Row{"Active", "Persona Name", "Account Name", "ASF Bot", "SteamID64", "Last Logged In"})
+				// Fixed: Active(~8) + ASF Bot(~14) + SteamID64(~20) + Last Logged In(~21) + chrome = ~70
+				// Distribute flexible width between Persona Name and Account Name
+				t.SetColumnConfigs(o.distributeFlexCols(w, 70,
+					FlexColSpec{Number: 2, MinWidth: 12, Ratio: 1},
+					FlexColSpec{Number: 3, MinWidth: 12, Ratio: 1},
+				))
 				for _, u := range users {
 					activeMarker := ""
 					if u.AutoLogin {
-						activeMarker = green.Sprint("● active")
+						activeMarker = green.Sprint("●")
 					} else if u.MostRecent {
-						activeMarker = yellow.Sprint("○ recent")
+						activeMarker = yellow.Sprint("○")
 					}
 					lastUsed := "-"
 					if u.Timestamp > 0 {
