@@ -99,14 +99,10 @@ func accountCommand(o *options) *cobra.Command {
 				if steamID == "0" {
 					steamID = ""
 				}
-				persona := bot.Nickname
-				if persona == "" {
-					persona = bot.Name
-				}
 				users = append(users, account.User{
 					SteamID64:   steamID,
-					AccountName: bot.Name,
-					PersonaName: persona,
+					AccountName: "", // Unknown from ASF API if bot is offline or credentials hidden
+					PersonaName: bot.Nickname,
 					ASFBot:      bot.Name,
 				})
 			}
@@ -127,6 +123,18 @@ func accountCommand(o *options) *cobra.Command {
 					} else if u.MostRecent {
 						activeMarker = yellow.Sprint("○")
 					}
+					persona := u.PersonaName
+					if persona == "" {
+						persona = "-"
+					}
+					accName := u.AccountName
+					if accName == "" {
+						accName = "-"
+					}
+					steamID := u.SteamID64
+					if steamID == "" {
+						steamID = "-"
+					}
 					lastUsed := "-"
 					if u.Timestamp > 0 {
 						lastUsed = time.Unix(u.Timestamp, 0).Format("2006-01-02 15:04:05")
@@ -135,7 +143,7 @@ func accountCommand(o *options) *cobra.Command {
 					if u.ASFBot != "" {
 						botCol = cyan.Sprint(u.ASFBot)
 					}
-					t.AppendRow(table.Row{activeMarker, u.PersonaName, u.AccountName, botCol, u.SteamID64, lastUsed})
+					t.AppendRow(table.Row{activeMarker, persona, accName, botCol, steamID, lastUsed})
 				}
 				o.renderTable(t)
 			})
