@@ -61,6 +61,34 @@ func SteamRunning() bool {
 	return false
 }
 
+// KillSteam attempts to gracefully terminate running Steam processes.
+func KillSteam() {
+	if runtime.GOOS == "linux" {
+		entries, err := os.ReadDir("/proc")
+		if err == nil {
+			for _, e := range entries {
+				pid, err := strconv.Atoi(e.Name())
+				if err != nil {
+					continue
+				}
+				comm, err := os.ReadFile(filepath.Join("/proc", e.Name(), "comm"))
+				if err == nil && strings.EqualFold(strings.TrimSpace(string(comm)), "steam") {
+					if proc, err := os.FindProcess(pid); err == nil {
+						_ = proc.Signal(os.Interrupt)
+					}
+				}
+			}
+		}
+		return
+	}
+	if runtime.GOOS == "windows" {
+		_ = exec.Command("taskkill", "/IM", "steam.exe").Run()
+		return
+	}
+	_ = exec.Command("pkill", "-TERM", "steam").Run()
+}
+
+
 func uniqueFiles(paths []string) []string {
 	seen := map[string]bool{}
 	var out []string

@@ -125,7 +125,7 @@ func accountCommand(o *options) *cobra.Command {
 			}
 			if restartSteam {
 				// Terminate running Steam instances
-				_ = exec.Command("pkill", "-TERM", "steam").Run()
+				library.KillSteam()
 				time.Sleep(500 * time.Millisecond)
 			}
 			switched, err := account.Switch(r, args[0])

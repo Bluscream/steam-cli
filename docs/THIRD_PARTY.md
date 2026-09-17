@@ -24,6 +24,15 @@ Runtime-linked Go modules are pinned by `go.mod` / `go.sum` and copied by `go mo
 | golang.org/x/term | v0.46.0 | Terminal detection | `vendor/golang.org/x/term/LICENSE` |
 | golang.org/x/sys | v0.48.0 | OS calls for locks/terminals | `vendor/golang.org/x/sys/LICENSE` |
 | github.com/skip2/go-qrcode | v0.0.0-20200617195104-da1b6568686e | Terminal QR code generation | `vendor/github.com/skip2/go-qrcode/LICENSE` |
+| modernc.org/sqlite | v1.59.0 | Pure Go SQLite driver for Steam cookies | `vendor/modernc.org/sqlite/LICENSE` |
+| modernc.org/libc | v1.75.7 | C runtime translation library (modernc.org/sqlite dependency) | `vendor/modernc.org/libc/LICENSE` |
+| modernc.org/mathutil | v1.7.1 | Math utility library (modernc.org/sqlite dependency) | `vendor/modernc.org/mathutil/LICENSE` |
+| modernc.org/memory | v1.12.1 | Memory allocation library (modernc.org/sqlite dependency) | `vendor/modernc.org/memory/LICENSE` |
+| github.com/dustin/go-humanize | v1.0.1 | Formatting helpers (modernc.org/sqlite dependency) | `vendor/github.com/dustin/go-humanize/LICENSE` |
+| github.com/google/uuid | v1.6.0 | UUID generation (modernc.org/sqlite dependency) | `vendor/github.com/google/uuid/LICENSE` |
+| github.com/mattn/go-isatty | v0.0.24 | TTY detection (modernc.org/sqlite dependency) | `vendor/github.com/mattn/go-isatty/LICENSE` |
+| github.com/ncruces/go-strftime | v1.0.0 | strftime formatting (modernc.org/sqlite dependency) | `vendor/github.com/ncruces/go-strftime/LICENSE` |
+| github.com/remyoudompheng/bigfft | v0.0.0-20230129092748-24d4a6f8daec | FFT big integer arithmetic (modernc.org/sqlite dependency) | `vendor/github.com/remyoudompheng/bigfft/LICENSE` |
 
 ## Embedded data
 

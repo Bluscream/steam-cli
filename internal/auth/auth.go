@@ -1,9 +1,15 @@
 package auth
 
 import (
+	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -22,6 +28,7 @@ import (
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
+	_ "modernc.org/sqlite"
 	"steamcli.local/steam/internal/config"
 	"steamcli.local/steam/internal/httpx"
 )
@@ -444,37 +451,24 @@ func ImportClientSession() (*Session, error) {
 		return nil, errors.New("steam client cookies database not found")
 	}
 
-	// Read encrypted value using python/sqlite or native command
-	script := fmt.Sprintf(`
-import sqlite3, hmac, hashlib, subprocess, urllib.parse, sys
-con = sqlite3.connect("file:%s?mode=ro", uri=True)
-cur = con.cursor()
-row = cur.execute("SELECT encrypted_value FROM cookies WHERE host_key = 'steamcommunity.com' AND name = 'steamLoginSecure'").fetchone()
-con.close()
-if not row or not row[0]:
-    sys.exit(1)
-enc = row[0]
-if enc.startswith(b'v10'):
-    enc = enc[3:]
-key = hmac.new(b'peanuts', b'saltysalt\x00\x00\x00\x01', hashlib.sha1).digest()[:16]
-iv = b' ' * 16
-p = subprocess.Popen(['openssl', 'enc', '-d', '-aes-128-cbc', '-K', key.hex(), '-iv', iv.hex()],
-                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-out, err = p.communicate(enc)
-if p.returncode != 0:
-    sys.exit(1)
-val = out.decode('utf-8', errors='replace').strip()
-# Remove non-printable / padding
-val = ''.join(c for c in val if c >= ' ' and c <= '~')
-sys.stdout.write(val)
-`, dbPath)
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?mode=ro", dbPath))
+	if err != nil {
+		return nil, fmt.Errorf("failed to open cookies database: %w", err)
+	}
+	defer db.Close()
 
-	out, err := exec.Command("python3", "-c", script).Output()
-	if err != nil || len(out) == 0 {
-		return nil, errors.New("failed to extract or decrypt steamLoginSecure from Steam client")
+	var encryptedVal []byte
+	err = db.QueryRow("SELECT encrypted_value FROM cookies WHERE host_key = 'steamcommunity.com' AND name = 'steamLoginSecure'").Scan(&encryptedVal)
+	if err != nil {
+		return nil, fmt.Errorf("steamLoginSecure cookie not found in steam client database: %w", err)
 	}
 
-	cookieVal := strings.TrimSpace(string(out))
+	cookieVal, err := decryptCEFCookieLinux(encryptedVal)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt steamLoginSecure cookie: %w", err)
+	}
+
+	cookieVal = strings.TrimSpace(cookieVal)
 	parts := strings.Split(cookieVal, "||")
 	steamID := ""
 	if len(parts) > 0 {
@@ -517,6 +511,48 @@ func SaveSession(s *Session) error {
 	// Also write plain steam_login_secure secret file
 	cookiePath := filepath.Join(dataDir, "steam_login_secure")
 	return os.WriteFile(cookiePath, []byte(s.SteamLoginSecure), 0600)
+}
+
+// decryptCEFCookieLinux decrypts Chrome/CEF v10 cookie values on Linux.
+func decryptCEFCookieLinux(enc []byte) (string, error) {
+	if bytes.HasPrefix(enc, []byte("v10")) {
+		enc = enc[3:]
+	}
+	if len(enc) == 0 {
+		return "", errors.New("empty encrypted cookie data")
+	}
+
+	// Chromium Linux cookie key derivation:
+	// PBKDF2 or standard hardcoded saltysalt key:
+	// hmac-sha1("peanuts", "saltysalt\x00\x00\x00\x01")[:16]
+	mac := hmac.New(sha1.New, []byte("peanuts"))
+	mac.Write([]byte("saltysalt\x00\x00\x00\x01"))
+	key := mac.Sum(nil)[:16]
+
+	// Chromium uses 16 space characters for IV on Linux
+	iv := bytes.Repeat([]byte(" "), 16)
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+
+	if len(enc)%block.BlockSize() != 0 {
+		return "", errors.New("encrypted cookie length is not a multiple of block size")
+	}
+
+	mode := cipher.NewCBCDecrypter(block, iv)
+	decrypted := make([]byte, len(enc))
+	mode.CryptBlocks(decrypted, enc)
+
+	// Remove PKCS#7 or trailing padding / non-printable chars
+	var sb strings.Builder
+	for _, b := range decrypted {
+		if b >= 0x20 && b <= 0x7e {
+			sb.WriteByte(b)
+		}
+	}
+	return sb.String(), nil
 }
 
 
