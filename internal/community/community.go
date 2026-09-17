@@ -159,6 +159,7 @@ func interpret(body []byte) error {
 // AddChild adds an item to a collection.
 func (c *Client) AddChild(ctx context.Context, collectionID, itemID string) error {
 	return c.post(ctx, "sharedfiles/addchild/", url.Values{
+		"id":       {collectionID},
 		"parentid": {collectionID},
 		"childid":  {itemID},
 	})
@@ -167,6 +168,7 @@ func (c *Client) AddChild(ctx context.Context, collectionID, itemID string) erro
 // RemoveChild removes an item from a collection.
 func (c *Client) RemoveChild(ctx context.Context, collectionID, itemID string) error {
 	return c.post(ctx, "sharedfiles/removechild/", url.Values{
+		"id":       {collectionID},
 		"parentid": {collectionID},
 		"childid":  {itemID},
 	})

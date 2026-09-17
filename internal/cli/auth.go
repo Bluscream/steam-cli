@@ -49,19 +49,27 @@ func authCommand(o *options) *cobra.Command {
 		},
 	}
 
-	browserCmd := &cobra.Command{
-		Use:   "browser",
-		Short: "Log in via browser window and local loopback session receiver",
+	importCmd := &cobra.Command{
+		Use:     "import",
+		Aliases: []string{"client", "local"},
+		Short:   "Import active web session automatically from local desktop Steam client",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBrowserAuth(cmd, o)
+			return runImportAuth(cmd, o)
 		},
 	}
 
 	root.RunE = func(cmd *cobra.Command, args []string) error {
+		// Try auto-importing from local Steam client first
+		if sess, err := auth.ImportClientSession(); err == nil && sess.SteamLoginSecure != "" {
+			return o.emit(cmd, sess, func(w io.Writer) {
+				fmt.Fprintf(w, "✓ Automatically imported active session from local Steam client (SteamID: %s)!\n", sess.SteamID)
+				fmt.Fprintf(w, "Session saved to ~/.local/share/steam-cli/steam_login_secure\n")
+			})
+		}
 		return runCredentialsAuth(cmd, o, userFlag, passFlag, codeFlag)
 	}
 
-	root.AddCommand(credentialsCmd, qrCmd, browserCmd)
+	root.AddCommand(credentialsCmd, qrCmd, importCmd)
 	return root
 }
 
@@ -238,3 +246,17 @@ func runBrowserAuth(cmd *cobra.Command, o *options) error {
 		fmt.Fprintf(w, "Session saved to ~/.local/share/steam-cli/steam_login_secure\n")
 	})
 }
+
+func runImportAuth(cmd *cobra.Command, o *options) error {
+	out := cmd.OutOrStdout()
+	fmt.Fprintln(out, "Extracting active session from local desktop Steam client...")
+	sess, err := auth.ImportClientSession()
+	if err != nil {
+		return fmt.Errorf("import failed: %w", err)
+	}
+	return o.emit(cmd, sess, func(w io.Writer) {
+		fmt.Fprintf(w, "✓ Successfully imported active session (SteamID: %s)!\n", sess.SteamID)
+		fmt.Fprintf(w, "Session saved to ~/.local/share/steam-cli/steam_login_secure\n")
+	})
+}
+

@@ -210,10 +210,13 @@ func (s Settings) AccessToken() (string, error) {
 // Community endpoints that the Web API does not expose.
 func (s Settings) CommunityLoginSecure() (string, error) {
 	file := s.CommunityLoginSecureFile
-	if file == "" && s.DataDir != "" {
-		candidate := filepath.Join(s.DataDir, "steam_login_secure")
-		if _, err := os.Stat(candidate); err == nil {
-			file = candidate
+	// Only fall back to local saved file if environment variable was not set at all
+	if _, set := os.LookupEnv(s.CommunityLoginSecureEnv); !set {
+		if file == "" && s.DataDir != "" {
+			candidate := filepath.Join(s.DataDir, "steam_login_secure")
+			if _, err := os.Stat(candidate); err == nil {
+				file = candidate
+			}
 		}
 	}
 	return Secret(s.CommunityLoginSecureEnv, file)

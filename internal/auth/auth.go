@@ -421,6 +421,79 @@ func BrowserFlow(ctx context.Context, port int) (*Session, error) {
 	}
 }
 
+// ImportClientSession reads and decrypts steamLoginSecure from the local Steam client's CEF htmlcache.
+func ImportClientSession() (*Session, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+
+	cookieCandidates := []string{
+		filepath.Join(home, ".local/share/Steam/config/htmlcache/Default/Cookies"),
+		filepath.Join(home, ".steam/steam/config/htmlcache/Default/Cookies"),
+	}
+
+	var dbPath string
+	for _, p := range cookieCandidates {
+		if _, err := os.Stat(p); err == nil {
+			dbPath = p
+			break
+		}
+	}
+	if dbPath == "" {
+		return nil, errors.New("steam client cookies database not found")
+	}
+
+	// Read encrypted value using python/sqlite or native command
+	script := fmt.Sprintf(`
+import sqlite3, hmac, hashlib, subprocess, urllib.parse, sys
+con = sqlite3.connect("file:%s?mode=ro", uri=True)
+cur = con.cursor()
+row = cur.execute("SELECT encrypted_value FROM cookies WHERE host_key = 'steamcommunity.com' AND name = 'steamLoginSecure'").fetchone()
+con.close()
+if not row or not row[0]:
+    sys.exit(1)
+enc = row[0]
+if enc.startswith(b'v10'):
+    enc = enc[3:]
+key = hmac.new(b'peanuts', b'saltysalt\x00\x00\x00\x01', hashlib.sha1).digest()[:16]
+iv = b' ' * 16
+p = subprocess.Popen(['openssl', 'enc', '-d', '-aes-128-cbc', '-K', key.hex(), '-iv', iv.hex()],
+                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+out, err = p.communicate(enc)
+if p.returncode != 0:
+    sys.exit(1)
+val = out.decode('utf-8', errors='replace').strip()
+# Remove non-printable / padding
+val = ''.join(c for c in val if c >= ' ' and c <= '~')
+sys.stdout.write(val)
+`, dbPath)
+
+	out, err := exec.Command("python3", "-c", script).Output()
+	if err != nil || len(out) == 0 {
+		return nil, errors.New("failed to extract or decrypt steamLoginSecure from Steam client")
+	}
+
+	cookieVal := strings.TrimSpace(string(out))
+	parts := strings.Split(cookieVal, "||")
+	steamID := ""
+	if len(parts) > 0 {
+		steamID = strings.TrimSpace(parts[0])
+	}
+
+	sess := &Session{
+		SteamID:          steamID,
+		SteamLoginSecure: url.QueryEscape(cookieVal),
+	}
+	// Normalize %7C%7C
+	sess.SteamLoginSecure = strings.ReplaceAll(sess.SteamLoginSecure, "%7C%7C", "%7C%7C")
+
+	if err := SaveSession(sess); err != nil {
+		return nil, err
+	}
+	return sess, nil
+}
+
 // SaveSession saves the captured session to ~/.local/share/steam-cli/session.json and sets community secret file.
 func SaveSession(s *Session) error {
 	_, dataDir, _, err := config.Paths()
@@ -445,3 +518,5 @@ func SaveSession(s *Session) error {
 	cookiePath := filepath.Join(dataDir, "steam_login_secure")
 	return os.WriteFile(cookiePath, []byte(s.SteamLoginSecure), 0600)
 }
+
+
