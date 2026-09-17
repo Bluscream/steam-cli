@@ -124,22 +124,13 @@ func accountCommand(o *options) *cobra.Command {
 						activeMarker = yellow.Sprint("○")
 					}
 					persona := u.PersonaName
-					if persona == "" {
-						persona = "-"
-					}
 					accName := u.AccountName
-					if accName == "" {
-						accName = "-"
-					}
 					steamID := u.SteamID64
-					if steamID == "" {
-						steamID = "-"
-					}
-					lastUsed := "-"
+					lastUsed := ""
 					if u.Timestamp > 0 {
 						lastUsed = time.Unix(u.Timestamp, 0).Format("2006-01-02 15:04:05")
 					}
-					botCol := "-"
+					botCol := ""
 					if u.ASFBot != "" {
 						botCol = cyan.Sprint(u.ASFBot)
 					}
