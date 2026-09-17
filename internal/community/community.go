@@ -183,8 +183,8 @@ func (c *Client) DeleteFile(ctx context.Context, appID int, itemID string) error
 	})
 }
 
-// sharedFileID anchors on the element id the Workshop uses for every item tile.
-var sharedFileID = regexp.MustCompile(`id="sharedfile_(\d+)"`)
+// sharedFileID anchors on the element id or link the Workshop uses for item tiles.
+var sharedFileID = regexp.MustCompile(`(?:id="(?:sharedfile_|Subscription)(\d+)"|sharedfiles/filedetails/\?id=(\d+))`)
 
 // ListWorkshopFiles returns the published file IDs on the account's own
 // Workshop listing for a filter such as mysubscriptions or myfavorites.
@@ -240,7 +240,10 @@ func (c *Client) ListWorkshopFiles(ctx context.Context, appID int, filter string
 		added := 0
 		for _, m := range matches {
 			id := string(m[1])
-			if !seen[id] {
+			if id == "" && len(m) > 2 {
+				id = string(m[2])
+			}
+			if id != "" && !seen[id] {
 				seen[id] = true
 				out = append(out, id)
 				added++
