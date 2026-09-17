@@ -210,13 +210,13 @@ func (s Settings) AccessToken() (string, error) {
 // Community endpoints that the Web API does not expose.
 func (s Settings) CommunityLoginSecure() (string, error) {
 	file := s.CommunityLoginSecureFile
-	// Only fall back to local saved file if environment variable was not set at all
-	if _, set := os.LookupEnv(s.CommunityLoginSecureEnv); !set {
-		if file == "" && s.DataDir != "" {
-			candidate := filepath.Join(s.DataDir, "steam_login_secure")
-			if _, err := os.Stat(candidate); err == nil {
-				file = candidate
-			}
+	// Prefer saved session file in DataDir if present and populated, as it reflects
+	// fresh auth logins/imports rather than long-lived inherited shell environment variables.
+	if file == "" && s.DataDir != "" {
+		candidate := filepath.Join(s.DataDir, "steam_login_secure")
+		if fi, err := os.Stat(candidate); err == nil && fi.Size() > 0 {
+			file = candidate
+			return Secret("", file)
 		}
 	}
 	return Secret(s.CommunityLoginSecureEnv, file)
