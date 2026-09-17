@@ -1,11 +1,16 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
+	"steamcli.local/steam/internal/library"
 	"steamcli.local/steam/internal/steamclient"
 )
 
@@ -113,11 +118,10 @@ func clientCommand(o *options) *cobra.Command {
 
 	root.AddCommand(where, launch, open)
 
-	// steam:// verbs that take an AppID.
+	// steam:// verbs that take an AppID (run, install, validate, store).
 	for _, v := range []struct{ use, verb, short string }{
 		{"run APPID", "run", "Launch a game"},
 		{"install APPID", "install", "Start installing a game"},
-		{"uninstall APPID", "uninstall", "Start uninstalling a game"},
 		{"validate APPID", "validate", "Verify a game's local files"},
 		{"store APPID", "store", "Open a game's store page"},
 	} {
@@ -126,7 +130,11 @@ func clientCommand(o *options) *cobra.Command {
 			Short: v.short,
 			Args:  cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
-				u, err := steamclient.URL(v.verb, args[0])
+				appID, err := o.resolveAppID(cmd.Context(), args[0], cmd.ErrOrStderr())
+				if err != nil {
+					return err
+				}
+				u, err := steamclient.URL(v.verb, strconv.Itoa(appID))
 				if err != nil {
 					return err
 				}
@@ -134,6 +142,9 @@ func clientCommand(o *options) *cobra.Command {
 			},
 		})
 	}
+
+	uninstall := newUninstallCommand(o, run)
+	root.AddCommand(uninstall)
 
 	shutdown := &cobra.Command{
 		Use:   "shutdown",
@@ -147,3 +158,110 @@ func clientCommand(o *options) *cobra.Command {
 
 	return root
 }
+
+func newUninstallCommand(o *options, clientRun func(cmd *cobra.Command, args []string) error) *cobra.Command {
+	var force bool
+	var roots []string
+	var installDirHint string
+
+	cmd := &cobra.Command{
+		Use:   "uninstall APPID",
+		Short: "Uninstall a game via Steam client or thoroughly purge all files (--force)",
+		Long: "Uninstall a game.\n\n" +
+			"By default, forwards to the running Steam client via steam://uninstall/<APPID>.\n" +
+			"With --force / -f, it instructs the Steam client to uninstall AND physically purges all\n" +
+			"related files across all libraries: installation files, appmanifest, compatdata prefixes,\n" +
+			"shader cache, download staging, workshop items, and user cloud saves.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			appIDInt, err := o.resolveAppID(cmd.Context(), args[0], cmd.ErrOrStderr())
+			if err != nil {
+				return err
+			}
+			appID := strconv.Itoa(appIDInt)
+
+			if !force {
+				u, err := steamclient.URL("uninstall", appID)
+				if err != nil {
+					return err
+				}
+				if clientRun != nil {
+					return clientRun(cmd, []string{u})
+				}
+				return nil
+			}
+
+			// Force mode: notify client if available, then purge all files across libraries
+			clientNotified := false
+			if clientRun != nil {
+				u, err := steamclient.URL("uninstall", appID)
+				if err == nil {
+					_ = clientRun(cmd, []string{u})
+					clientNotified = true
+				}
+			}
+
+			r := roots
+			if len(r) == 0 {
+				r = library.Defaults()
+			}
+
+			purgeRes, err := library.PurgeAppFiles(r, appID, installDirHint)
+			if err != nil {
+				return err
+			}
+			purgeRes.ClientNotified = clientNotified
+
+			return o.emit(cmd, purgeRes, func(w io.Writer) {
+				if len(purgeRes.Artifacts) == 0 {
+					gameLabel := appID
+					if purgeRes.Name != "" {
+						gameLabel = fmt.Sprintf("%s (%s)", purgeRes.Name, appID)
+					}
+					fmt.Fprintf(w, "%s No leftover files or directories found for %s.\n", green.Sprint("Clean:"), gameLabel)
+				} else {
+					title := fmt.Sprintf("Purged Files & Artifacts for AppID %s", appID)
+					if purgeRes.Name != "" {
+						title = fmt.Sprintf("Purged Files & Artifacts for %s (%s)", purgeRes.Name, appID)
+					}
+					o.heading(w, "%s", title)
+					t := o.newTable(w)
+					t.AppendHeader(table.Row{"Category", "Path", "Size", "Description"})
+					t.SetColumnConfigs([]table.ColumnConfig{
+						{Number: 3, Align: text.AlignRight},
+					})
+					for _, art := range purgeRes.Artifacts {
+						sizeStr := ""
+						if art.BytesFreed > 0 {
+							sizeStr = o.sizeCell(art.BytesFreed)
+						}
+						t.AppendRow(table.Row{
+							art.Category,
+							truncate(art.Path, 65),
+							sizeStr,
+							art.Description,
+						})
+					}
+					o.renderTable(t)
+					if o.format != "csv" {
+						fmt.Fprintf(w, "\n%s Removed %d artifact(s), reclaimed %s.\n",
+							green.Sprint("Success:"), len(purgeRes.Artifacts), o.sizeCell(purgeRes.TotalBytes))
+					}
+				}
+
+				if len(purgeRes.Errors) > 0 {
+					for _, e := range purgeRes.Errors {
+						fmt.Fprintf(cmd.ErrOrStderr(), "%s %s\n", yellow.Sprint("Warning:"), e)
+					}
+				}
+			})
+		},
+	}
+
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force delete ALL game installation files, prefixes, shaders, downloads, and manifests")
+	cmd.Flags().StringArrayVar(&roots, "root", nil, "Steam root directory; repeat for multiple installations")
+	cmd.Flags().StringVar(&installDirHint, "dir", "", "Explicit game installation directory path if not discoverable via manifest")
+
+	return cmd
+}
+

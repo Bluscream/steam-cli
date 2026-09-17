@@ -146,6 +146,15 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 		},
 	}
 
+	uninstallClientCmd := clientCommand(o)
+	var uninstallCmd *cobra.Command
+	for _, c := range uninstallClientCmd.Commands() {
+		if c.Name() == "uninstall" {
+			uninstallCmd = c
+			break
+		}
+	}
+
 	launchClientCmd := &cobra.Command{
 		Use:     "launch -- [ARGS...]",
 		Aliases: []string{"exec"},
@@ -272,6 +281,7 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 		accountsCmd,
 		nickCmd,
 		runClientCmd,
+		uninstallCmd,
 		launchClientCmd,
 		shutdownClientCmd,
 		friendsCmd,

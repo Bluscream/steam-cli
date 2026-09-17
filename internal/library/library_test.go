@@ -264,3 +264,83 @@ func TestScanSurvivesMissingOverrideFiles(t *testing.T) {
 		t.Errorf("apps = %+v", rep.Apps)
 	}
 }
+
+func TestPurgeAppFiles(t *testing.T) {
+	root := t.TempDir()
+	writeVDF(t, root, "steamapps/libraryfolders.vdf",
+		`"libraryfolders" { "0" { "path" "`+root+`" } }`)
+	writeVDF(t, root, "steamapps/appmanifest_12345.acf",
+		`"AppState" { "appid" "12345" "name" "Test Game" "installdir" "TestGame" "StateFlags" "4" }`)
+
+	// Create test game directories
+	commonDir := filepath.Join(root, "steamapps", "common", "TestGame")
+	_ = os.MkdirAll(commonDir, 0755)
+	_ = os.WriteFile(filepath.Join(commonDir, "game.bin"), []byte("game data"), 0644)
+
+	compatDir := filepath.Join(root, "steamapps", "compatdata", "12345")
+	_ = os.MkdirAll(compatDir, 0755)
+	_ = os.WriteFile(filepath.Join(compatDir, "pfx"), []byte("prefix data"), 0644)
+
+	shaderDir := filepath.Join(root, "steamapps", "shadercache", "12345")
+	_ = os.MkdirAll(shaderDir, 0755)
+
+	dlDir := filepath.Join(root, "steamapps", "downloading", "12345")
+	_ = os.MkdirAll(dlDir, 0755)
+
+	wsDir := filepath.Join(root, "steamapps", "workshop", "content", "12345")
+	_ = os.MkdirAll(wsDir, 0755)
+
+	userDir := filepath.Join(root, "userdata", "1000", "12345")
+	_ = os.MkdirAll(userDir, 0755)
+
+	res, err := PurgeAppFiles([]string{root}, "12345", "")
+	if err != nil {
+		t.Fatalf("PurgeAppFiles failed: %v", err)
+	}
+
+	if res.AppID != "12345" {
+		t.Errorf("res.AppID = %q, want 12345", res.AppID)
+	}
+	if res.Name != "Test Game" {
+		t.Errorf("res.Name = %q, want 'Test Game'", res.Name)
+	}
+	if len(res.Artifacts) == 0 {
+		t.Fatalf("expected artifacts to be purged, got none")
+	}
+
+	// Verify all target paths no longer exist on disk
+	if _, err := os.Stat(commonDir); !os.IsNotExist(err) {
+		t.Errorf("commonDir %s was not removed", commonDir)
+	}
+	if _, err := os.Stat(compatDir); !os.IsNotExist(err) {
+		t.Errorf("compatDir %s was not removed", compatDir)
+	}
+	if _, err := os.Stat(shaderDir); !os.IsNotExist(err) {
+		t.Errorf("shaderDir %s was not removed", shaderDir)
+	}
+	if _, err := os.Stat(dlDir); !os.IsNotExist(err) {
+		t.Errorf("dlDir %s was not removed", dlDir)
+	}
+	if _, err := os.Stat(wsDir); !os.IsNotExist(err) {
+		t.Errorf("wsDir %s was not removed", wsDir)
+	}
+	if _, err := os.Stat(userDir); !os.IsNotExist(err) {
+		t.Errorf("userDir %s was not removed", userDir)
+	}
+}
+
+func TestIsSafePurgePath(t *testing.T) {
+	if isSafePurgePath("/") {
+		t.Error("root / must not be safe")
+	}
+	if isSafePurgePath("/home/blu/.local/share/Steam/steamapps/common") {
+		t.Error("common dir itself must not be safe")
+	}
+	if isSafePurgePath("/home/blu/.local/share/Steam/steamapps") {
+		t.Error("steamapps dir itself must not be safe")
+	}
+	if !isSafePurgePath("/home/blu/.local/share/Steam/steamapps/common/Half-Life") {
+		t.Error("specific game directory should be safe")
+	}
+}
+
