@@ -66,9 +66,30 @@ func accountCommand(o *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			// Try matching ASF bots to accounts by SteamID
+			asfBotMap := make(map[string]string)
+			if asfc, err := asfClient(); err == nil {
+				if b, err := asfc.Call(cmd.Context(), "GET", "Api/Bot/ASF", nil, nil); err == nil {
+					if summaries, ok := asf.Bots(b); ok {
+						for _, bot := range summaries {
+							if bot.SteamID != "" {
+								asfBotMap[bot.SteamID] = bot.Name
+							}
+						}
+					}
+				}
+			}
+
+			for i := range users {
+				if botName, ok := asfBotMap[users[i].SteamID64]; ok {
+					users[i].ASFBot = botName
+				}
+			}
+
 			return o.emit(cmd, users, func(w io.Writer) {
 				t := o.newTable(w)
-				t.AppendHeader(table.Row{"Active", "Persona Name", "Account Name", "SteamID64", "Last Logged In"})
+				t.AppendHeader(table.Row{"Active", "Persona Name", "Account Name", "SteamID64", "ASF Bot", "Last Logged In"})
 				for _, u := range users {
 					activeMarker := ""
 					if u.AutoLogin {
@@ -80,7 +101,11 @@ func accountCommand(o *options) *cobra.Command {
 					if u.Timestamp > 0 {
 						lastUsed = time.Unix(u.Timestamp, 0).Format("2006-01-02 15:04:05")
 					}
-					t.AppendRow(table.Row{activeMarker, u.PersonaName, u.AccountName, u.SteamID64, lastUsed})
+					botCol := "-"
+					if u.ASFBot != "" {
+						botCol = cyan.Sprint(u.ASFBot)
+					}
+					t.AppendRow(table.Row{activeMarker, u.PersonaName, u.AccountName, u.SteamID64, botCol, lastUsed})
 				}
 				o.renderTable(t)
 			})
@@ -279,6 +304,7 @@ func accountCommand(o *options) *cobra.Command {
 	}
 	privacyCmd.Flags().StringVarP(&botFlag, "bot", "b", "", "ASF bot name to target if using ASF (default: matches logged-in user, else ASF)")
 
+	root.RunE = listCmd.RunE
 	root.AddCommand(listCmd, switchCmd, activeCmd, forgetCmd, editCmd, nameCmd, privacyCmd)
 	return root
 }

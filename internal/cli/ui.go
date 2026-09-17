@@ -129,6 +129,7 @@ var (
 	green  = text.Colors{text.FgGreen}
 	red    = text.Colors{text.FgRed}
 	yellow = text.Colors{text.FgYellow}
+	cyan   = text.Colors{text.FgCyan}
 	dim    = text.Colors{text.Faint}
 )
 

@@ -250,8 +250,23 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 		},
 	}
 
+	accountsCmd := &cobra.Command{
+		Use:   "accounts",
+		Short: "List all accounts saved in local Steam client login records (alias for account list)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			for _, c := range accCmd.Commands() {
+				if c.Name() == "list" {
+					return c.RunE(cmd, args)
+				}
+			}
+			return accCmd.RunE(cmd, args)
+		},
+	}
+
 	r.AddCommand(
 		whoamiCmd,
+		accountsCmd,
 		nickCmd,
 		runClientCmd,
 		launchClientCmd,

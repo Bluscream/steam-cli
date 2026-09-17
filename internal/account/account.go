@@ -23,6 +23,7 @@ type User struct {
 	MostRecent       bool   `json:"most_recent"`
 	RememberPassword bool   `json:"remember_password"`
 	WantsOffline     bool   `json:"wants_offline"`
+	ASFBot           string `json:"asf_bot,omitempty"`
 }
 
 // List returns all accounts known to loginusers.vdf across the provided Steam roots.
