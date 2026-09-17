@@ -293,7 +293,7 @@ func TestPurgeAppFiles(t *testing.T) {
 	userDir := filepath.Join(root, "userdata", "1000", "12345")
 	_ = os.MkdirAll(userDir, 0755)
 
-	res, err := PurgeAppFiles([]string{root}, "12345", "")
+	res, err := PurgeAppFiles([]string{root}, "12345", "", true)
 	if err != nil {
 		t.Fatalf("PurgeAppFiles failed: %v", err)
 	}

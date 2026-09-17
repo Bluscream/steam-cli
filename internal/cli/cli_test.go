@@ -35,6 +35,7 @@ func cleanEnv(t *testing.T) {
 	t.Setenv("STEAM_COMMUNITY_URL", "")
 	t.Setenv("STEAM_LOGIN_SECURE", "")
 	t.Setenv("STEAM_ACCESS_TOKEN", "")
+	t.Setenv("STEAM_CLIENT_PATH", "/usr/bin/true")
 }
 func TestJSONKeepsSteamIDsExact(t *testing.T) {
 	cleanEnv(t)
@@ -1732,15 +1733,16 @@ func TestDownloadsBatchActions(t *testing.T) {
 	}
 
 	// Recreate staging file and test batch --fix (with corrupted state)
-	_ = os.MkdirAll(dlDir, 0755)
-	_ = os.WriteFile(filepath.Join(dlDir, "staging2.bin"), []byte("data"), 0644)
+	dlDirFix := filepath.Join(steamapps, "downloading", "9999999")
+	_ = os.MkdirAll(dlDirFix, 0755)
+	_ = os.WriteFile(filepath.Join(dlDirFix, "staging2.bin"), []byte("data"), 0644)
 	mockManifestCorrupt := `"AppState" {
-		"appid" "227300"
-		"name" "Euro Truck Simulator 2"
+		"appid" "9999999"
+		"name" "Mock Corrupted Game"
 		"StateFlags" "130"
 		"UpdateResult" "5"
 	}`
-	_ = os.WriteFile(filepath.Join(steamapps, "appmanifest_227300.acf"), []byte(mockManifestCorrupt), 0644)
+	_ = os.WriteFile(filepath.Join(steamapps, "appmanifest_9999999.acf"), []byte(mockManifestCorrupt), 0644)
 
 	outFix, errFix := execute(t, "downloads", "--root", root, "--fix")
 	if errFix != nil {

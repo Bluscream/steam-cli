@@ -160,18 +160,21 @@ func clientCommand(o *options) *cobra.Command {
 }
 
 func newUninstallCommand(o *options, clientRun func(cmd *cobra.Command, args []string) error) *cobra.Command {
-	var force bool
+	var force, purge bool
 	var roots []string
 	var installDirHint string
 
 	cmd := &cobra.Command{
-		Use:   "uninstall APPID",
-		Short: "Uninstall a game via Steam client or thoroughly purge all files (--force)",
+		Use:     "uninstall APPID",
+		Aliases: []string{"remove", "purge"},
+		Short:   "Uninstall a game via Steam client or thoroughly purge all files (--force / --purge)",
 		Long: "Uninstall a game.\n\n" +
 			"By default, forwards to the running Steam client via steam://uninstall/<APPID>.\n" +
 			"With --force / -f, it instructs the Steam client to uninstall AND physically purges all\n" +
 			"related files across all libraries: installation files, appmanifest, compatdata prefixes,\n" +
-			"shader cache, download staging, workshop items, and user cloud saves.",
+			"shader cache, download staging, workshop items, and user cloud saves.\n\n" +
+			"With --purge / -p, it also finds and deletes external non-Steam save files, configs,\n" +
+			"and application data in OS directories (~/.config, ~/.local/share, ~/Documents, Saved Games).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			appIDInt, err := o.resolveAppID(cmd.Context(), args[0], cmd.ErrOrStderr())
@@ -180,7 +183,7 @@ func newUninstallCommand(o *options, clientRun func(cmd *cobra.Command, args []s
 			}
 			appID := strconv.Itoa(appIDInt)
 
-			if !force {
+			if !force && !purge {
 				u, err := steamclient.URL("uninstall", appID)
 				if err != nil {
 					return err
@@ -191,7 +194,7 @@ func newUninstallCommand(o *options, clientRun func(cmd *cobra.Command, args []s
 				return nil
 			}
 
-			// Force mode: notify client if available, then purge all files across libraries
+			// Force or purge mode: notify client if available, then purge all files across libraries
 			clientNotified := false
 			if clientRun != nil {
 				u, err := steamclient.URL("uninstall", appID)
@@ -206,7 +209,7 @@ func newUninstallCommand(o *options, clientRun func(cmd *cobra.Command, args []s
 				r = library.Defaults()
 			}
 
-			purgeRes, err := library.PurgeAppFiles(r, appID, installDirHint)
+			purgeRes, err := library.PurgeAppFiles(r, appID, installDirHint, purge)
 			if err != nil {
 				return err
 			}
@@ -259,9 +262,11 @@ func newUninstallCommand(o *options, clientRun func(cmd *cobra.Command, args []s
 	}
 
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force delete ALL game installation files, prefixes, shaders, downloads, and manifests")
+	cmd.Flags().BoolVarP(&purge, "purge", "p", false, "Also find and delete non-Steam game configs, saves, and standalone OS directories")
 	cmd.Flags().StringArrayVar(&roots, "root", nil, "Steam root directory; repeat for multiple installations")
 	cmd.Flags().StringVar(&installDirHint, "dir", "", "Explicit game installation directory path if not discoverable via manifest")
 
 	return cmd
 }
+
 

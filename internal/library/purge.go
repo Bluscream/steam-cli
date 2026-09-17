@@ -53,7 +53,9 @@ func calculateDirSize(path string) (int64, int) {
 
 // PurgeAppFiles thoroughly finds and removes all leftover files, directories, prefixes,
 // caches, downloads, workshop items, and manifests associated with appID across all libraries and roots.
-func PurgeAppFiles(roots []string, appID string, installDirHint string) (*PurgeResult, error) {
+// If purgeNonSteam is true, it also searches system locations (e.g. ~/.config, ~/.local/share, ~/Documents, Saved Games)
+// for external game save files and configs.
+func PurgeAppFiles(roots []string, appID string, installDirHint string, purgeNonSteam bool) (*PurgeResult, error) {
 	appID = strings.TrimSpace(appID)
 	if appID == "" {
 		return nil, fmt.Errorf("appID cannot be empty")
@@ -285,6 +287,101 @@ func PurgeAppFiles(roots []string, appID string, installDirHint string) (*PurgeR
 					Category:    "cache",
 					Description: "User librarycache metadata",
 				})
+			}
+		}
+	}
+
+	// 4. Non-Steam OS-level saves, configs, and standalone application directories
+	if purgeNonSteam {
+		candidateNames := []string{}
+		if result.Name != "" {
+			candidateNames = append(candidateNames, result.Name)
+			// Also try without spaces or special characters
+			noSpaces := strings.ReplaceAll(result.Name, " ", "")
+			if noSpaces != result.Name {
+				candidateNames = append(candidateNames, noSpaces)
+			}
+			// Lowercase/snake/kebab variants
+			candidateNames = append(candidateNames, strings.ToLower(result.Name))
+			candidateNames = append(candidateNames, strings.ToLower(noSpaces))
+		}
+		if installDirHint != "" {
+			candidateNames = append(candidateNames, filepath.Base(installDirHint))
+		}
+		if matchedInstallDir != "" {
+			candidateNames = append(candidateNames, filepath.Base(matchedInstallDir))
+		}
+
+		home, _ := os.UserHomeDir()
+		if home != "" {
+			// Search locations for native/wine game saves and configs:
+			// - ~/.config/<GameName>
+			// - ~/.local/share/<GameName>
+			// - ~/Documents/<GameName>
+			// - ~/Saved Games/<GameName>
+			// - ~/.wine/drive_c/users/*/Saved Games/<GameName>
+			// - ~/.var/app/*/data/<GameName> (Flatpak sandbox app data)
+			searchRoots := []string{
+				filepath.Join(home, ".config"),
+				filepath.Join(home, ".local", "share"),
+				filepath.Join(home, "Documents"),
+				filepath.Join(home, "Saved Games"),
+				filepath.Join(home, ".var", "app"),
+			}
+
+			// Add Windows / Wine user directories if on Windows
+			appData := os.Getenv("APPDATA")
+			if appData != "" {
+				searchRoots = append(searchRoots, appData)
+			}
+			localAppData := os.Getenv("LOCALAPPDATA")
+			if localAppData != "" {
+				searchRoots = append(searchRoots, localAppData)
+			}
+			userProfile := os.Getenv("USERPROFILE")
+			if userProfile != "" {
+				searchRoots = append(searchRoots, filepath.Join(userProfile, "Saved Games"))
+				searchRoots = append(searchRoots, filepath.Join(userProfile, "Documents"))
+			}
+
+			seenCandidates := make(map[string]bool)
+			for _, name := range candidateNames {
+				cleanName := strings.TrimSpace(name)
+				if cleanName == "" || len(cleanName) < 3 || seenCandidates[strings.ToLower(cleanName)] {
+					continue
+				}
+				seenCandidates[strings.ToLower(cleanName)] = true
+
+				for _, searchDir := range searchRoots {
+					if _, err := os.Stat(searchDir); err != nil {
+						continue
+					}
+
+					// Direct match
+					exactPath := filepath.Join(searchDir, cleanName)
+					if _, err := os.Lstat(exactPath); err == nil {
+						candidateTargets = append(candidateTargets, PurgedArtifact{
+							Path:        exactPath,
+							Category:    "save/config",
+							Description: "External game config / save directory",
+						})
+					}
+
+					// Case-insensitive match in searchDir
+					entries, err := os.ReadDir(searchDir)
+					if err == nil {
+						for _, de := range entries {
+							if strings.EqualFold(de.Name(), cleanName) && de.Name() != cleanName {
+								p := filepath.Join(searchDir, de.Name())
+								candidateTargets = append(candidateTargets, PurgedArtifact{
+									Path:        p,
+									Category:    "save/config",
+									Description: "External game config / save directory (matched case)",
+								})
+							}
+						}
+					}
+				}
 			}
 		}
 	}
