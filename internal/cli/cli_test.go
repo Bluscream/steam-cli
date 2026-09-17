@@ -1702,3 +1702,53 @@ func TestDownloadsCLI(t *testing.T) {
 	}
 }
 
+func TestDownloadsBatchActions(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	steamapps := filepath.Join(root, "steamapps")
+	dlDir := filepath.Join(steamapps, "downloading", "227300")
+	_ = os.MkdirAll(dlDir, 0755)
+	_ = os.WriteFile(filepath.Join(dlDir, "staging.bin"), []byte("temporary staging data"), 0644)
+
+	mockManifest := `"AppState" {
+		"appid" "227300"
+		"name" "Euro Truck Simulator 2"
+		"StateFlags" "6"
+		"BytesDownloaded" "500000"
+		"BytesToDownload" "2000000"
+	}`
+	_ = os.WriteFile(filepath.Join(steamapps, "appmanifest_227300.acf"), []byte(mockManifest), 0644)
+
+	// Test batch --stop
+	out, err := execute(t, "downloads", "--root", root, "--stop")
+	if err != nil {
+		t.Fatalf("batch stop failed: %v", err)
+	}
+	if !strings.Contains(out, "Stopped/purged staging artifacts") {
+		t.Errorf("expected batch stop confirmation, got:\n%s", out)
+	}
+	if _, err := os.Stat(dlDir); !os.IsNotExist(err) {
+		t.Errorf("expected staging dir to be removed by batch stop")
+	}
+
+	// Recreate staging file and test batch --fix
+	_ = os.MkdirAll(dlDir, 0755)
+	_ = os.WriteFile(filepath.Join(dlDir, "staging2.bin"), []byte("data"), 0644)
+	outFix, errFix := execute(t, "downloads", "--root", root, "--fix")
+	if errFix != nil {
+		t.Fatalf("batch fix failed: %v", errFix)
+	}
+	if !strings.Contains(outFix, "Cleared") || !strings.Contains(outFix, "validation") {
+		t.Errorf("expected batch fix confirmation, got:\n%s", outFix)
+	}
+
+	// Test batch --start
+	outStart, errStart := execute(t, "downloads", "--root", root, "--start")
+	if errStart != nil {
+		t.Fatalf("batch start failed: %v", errStart)
+	}
+	if !strings.Contains(outStart, "start/resume") {
+		t.Errorf("expected batch start confirmation, got:\n%s", outStart)
+	}
+}
+

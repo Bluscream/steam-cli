@@ -62,6 +62,111 @@ func downloadsCommand(o *options) *cobra.Command {
 				items = filtered
 			}
 
+			// Batch actions when invoked without specific APPID
+			if doStop {
+				var totalCleared int
+				var totalFreed int64
+				affectedAppIDs := make(map[string]bool)
+
+				for _, it := range items {
+					if affectedAppIDs[it.AppID] {
+						continue
+					}
+					affectedAppIDs[it.AppID] = true
+					cnt, freed, _ := library.CleanDownloadArtifacts(r, it.AppID)
+					totalCleared += cnt
+					totalFreed += freed
+				}
+
+				return o.emit(cmd, map[string]any{
+					"action":        "stop_all",
+					"cleared_items": totalCleared,
+					"freed_bytes":   totalFreed,
+					"freed_human":   humanBytes(totalFreed),
+					"app_count":     len(affectedAppIDs),
+				}, func(w io.Writer) {
+					fmt.Fprintf(w, "%s Stopped/purged staging artifacts across %d download target(s): removed %d artifact(s) (freed %s). Base game files preserved.\n",
+						green.Sprint("✓"), len(affectedAppIDs), totalCleared, humanBytes(totalFreed))
+				})
+			}
+
+			if doFix {
+				var totalCleared int
+				var totalFreed int64
+				affectedAppIDs := make(map[string]bool)
+				var validated []string
+
+				client := clientCommand(o)
+				var validateCmd *cobra.Command
+				for _, c := range client.Commands() {
+					if c.Name() == "validate" {
+						validateCmd = c
+						break
+					}
+				}
+
+				for _, it := range items {
+					if affectedAppIDs[it.AppID] {
+						continue
+					}
+					affectedAppIDs[it.AppID] = true
+					cnt, freed, _ := library.CleanDownloadArtifacts(r, it.AppID)
+					totalCleared += cnt
+					totalFreed += freed
+
+					if validateCmd != nil {
+						_ = validateCmd.RunE(cmd, []string{it.AppID})
+						validated = append(validated, it.AppID)
+					}
+				}
+
+				return o.emit(cmd, map[string]any{
+					"action":        "fix_all",
+					"cleared_items": totalCleared,
+					"freed_bytes":   totalFreed,
+					"freed_human":   humanBytes(totalFreed),
+					"app_count":     len(affectedAppIDs),
+					"validated":     validated,
+				}, func(w io.Writer) {
+					fmt.Fprintf(w, "%s Cleared %d corrupt/staging artifact(s) (%s freed) and triggered validation for %d app(s).\n",
+						green.Sprint("✓"), totalCleared, humanBytes(totalFreed), len(affectedAppIDs))
+				})
+			}
+
+			if doStart {
+				affectedAppIDs := make(map[string]bool)
+				var started []string
+
+				client := clientCommand(o)
+				var installCmd *cobra.Command
+				for _, c := range client.Commands() {
+					if c.Name() == "install" {
+						installCmd = c
+						break
+					}
+				}
+
+				for _, it := range items {
+					if affectedAppIDs[it.AppID] {
+						continue
+					}
+					affectedAppIDs[it.AppID] = true
+					if installCmd != nil {
+						_ = installCmd.RunE(cmd, []string{it.AppID})
+						started = append(started, it.AppID)
+					}
+				}
+
+				return o.emit(cmd, map[string]any{
+					"action":    "start_all",
+					"app_count": len(affectedAppIDs),
+					"started":   started,
+				}, func(w io.Writer) {
+					fmt.Fprintf(w, "%s Triggered Steam client to start/resume %d download(s).\n",
+						green.Sprint("✓"), len(affectedAppIDs))
+				})
+			}
+
 			return o.emit(cmd, rep, func(w io.Writer) {
 				if len(items) == 0 {
 					if filterStatus != "" {
@@ -164,9 +269,9 @@ func downloadsCommand(o *options) *cobra.Command {
 	cmd.Flags().StringArrayVar(&roots, "root", nil, "Steam root directory; repeat for multiple installations")
 	cmd.Flags().StringVarP(&filterStatus, "status", "s", "", "Filter by status: downloading, staging, committing, paused, queued, scheduled, corrupt, error")
 	cmd.Flags().IntVarP(&watchInterval, "interval", "i", 0, "Refresh interval in seconds (0 = run once)")
-	cmd.Flags().BoolVar(&doStop, "stop", false, "Purge staging directories and delta chunks without touching base game (requires APPID)")
-	cmd.Flags().BoolVar(&doStart, "start", false, "Trigger Steam client to resume/start downloading (requires APPID)")
-	cmd.Flags().BoolVar(&doFix, "fix", false, "Clear corrupt staging artifacts and trigger Steam to re-validate cleanly (requires APPID)")
+	cmd.Flags().BoolVar(&doStop, "stop", false, "Purge staging directories and delta chunks across downloads without touching base game")
+	cmd.Flags().BoolVar(&doStart, "start", false, "Trigger Steam client to resume/start downloading all matching apps")
+	cmd.Flags().BoolVar(&doFix, "fix", false, "Clear corrupt staging artifacts and trigger Steam to re-validate cleanly across matching apps")
 
 	cmd.AddCommand(downloadInspectCommand(o))
 
