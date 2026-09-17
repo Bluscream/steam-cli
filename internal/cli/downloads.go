@@ -246,6 +246,7 @@ func downloadsCommand(o *options) *cobra.Command {
 
 				if o.format != "csv" {
 					activeCount := len(rep.Active)
+					validatingCount := len(rep.Validating)
 					schedCount := len(rep.Scheduled)
 					pausedCount := len(rep.Paused)
 					corruptCount := len(rep.Corrupt)
@@ -254,6 +255,9 @@ func downloadsCommand(o *options) *cobra.Command {
 					var details []string
 					if activeCount > 0 {
 						details = append(details, fmt.Sprintf("%d active", activeCount))
+					}
+					if validatingCount > 0 {
+						details = append(details, cyan.Sprint(fmt.Sprintf("%d validating", validatingCount)))
 					}
 					if corruptCount > 0 {
 						details = append(details, red.Sprint(fmt.Sprintf("%d error/corrupt", corruptCount)))
@@ -279,7 +283,7 @@ func downloadsCommand(o *options) *cobra.Command {
 	}
 
 	cmd.Flags().StringArrayVar(&roots, "root", nil, "Steam root directory; repeat for multiple installations")
-	cmd.Flags().StringVarP(&filterStatus, "status", "s", "", "Filter by status: downloading, staging, committing, paused, queued, scheduled, corrupt, error")
+	cmd.Flags().StringVarP(&filterStatus, "status", "s", "", "Filter by status: downloading, validating, staging, committing, paused, queued, scheduled, corrupt, error")
 	cmd.Flags().IntVarP(&watchInterval, "interval", "i", 0, "Refresh interval in seconds (0 = run once)")
 	cmd.Flags().BoolVar(&doStop, "stop", false, "Purge staging directories and delta chunks across downloads without touching base game")
 	cmd.Flags().BoolVar(&doStart, "start", false, "Trigger Steam client to resume/start downloading all matching apps")
@@ -453,6 +457,8 @@ func formatDownloadStatus(s library.DownloadStatus) string {
 	switch s {
 	case library.StatusActive, library.StatusStaging, library.StatusCommitting:
 		return green.Sprint(strings.ToUpper(string(s)))
+	case library.StatusValidating:
+		return cyan.Sprint("VALIDATING")
 	case library.StatusPaused:
 		return yellow.Sprint("PAUSED")
 	case library.StatusQueued:

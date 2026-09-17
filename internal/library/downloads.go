@@ -16,15 +16,16 @@ import (
 type DownloadStatus string
 
 const (
-	StatusActive    DownloadStatus = "downloading"
-	StatusStaging   DownloadStatus = "staging"
+	StatusActive     DownloadStatus = "downloading"
+	StatusStaging    DownloadStatus = "staging"
 	StatusCommitting DownloadStatus = "committing"
-	StatusPaused    DownloadStatus = "paused"
-	StatusQueued    DownloadStatus = "queued"
-	StatusScheduled DownloadStatus = "scheduled"
-	StatusCorrupt   DownloadStatus = "corrupt"
-	StatusError     DownloadStatus = "error"
-	StatusCompleted DownloadStatus = "completed"
+	StatusValidating DownloadStatus = "validating"
+	StatusPaused     DownloadStatus = "paused"
+	StatusQueued     DownloadStatus = "queued"
+	StatusScheduled  DownloadStatus = "scheduled"
+	StatusCorrupt    DownloadStatus = "corrupt"
+	StatusError      DownloadStatus = "error"
+	StatusCompleted  DownloadStatus = "completed"
 )
 
 // DownloadItem represents a single app, workshop item, or shader cache download/update entry.
@@ -47,6 +48,7 @@ type DownloadItem struct {
 // DownloadsReport aggregates all discovered download items and diagnostic notes.
 type DownloadsReport struct {
 	Active     []DownloadItem `json:"active,omitempty"`
+	Validating []DownloadItem `json:"validating,omitempty"`
 	Scheduled  []DownloadItem `json:"scheduled,omitempty"`
 	Paused     []DownloadItem `json:"paused,omitempty"`
 	Corrupt    []DownloadItem `json:"corrupt,omitempty"`
@@ -370,15 +372,18 @@ func ScanDownloads(roots []string) (DownloadsReport, error) {
 	}
 
 	// 4. Parse content_log.txt and workshop_log.txt for recent errors or download state changes
-	scanRecentLogs(roots, itemMap)
+	scanRecentLogs(roots, itemMap, &rep)
 
 	// Collect into report
 	for _, it := range itemMap {
+		if it.Status == StatusCompleted && it.Source == "manifest" && it.UpdateResult == 0 {
+			continue
+		}
 		items = append(items, *it)
 	}
 
 	sort.Slice(items, func(i, j int) bool {
-		// Group priority: Active -> Corrupt -> Error -> Paused -> Queued -> Scheduled -> Completed
+		// Group priority: Active -> Validating -> Corrupt -> Error -> Paused -> Queued -> Scheduled -> Completed
 		pI := statusPriority(items[i].Status)
 		pJ := statusPriority(items[j].Status)
 		if pI != pJ {
@@ -395,6 +400,8 @@ func ScanDownloads(roots []string) (DownloadsReport, error) {
 		switch it.Status {
 		case StatusActive, StatusStaging, StatusCommitting:
 			repOut.Active = append(repOut.Active, it)
+		case StatusValidating:
+			repOut.Validating = append(repOut.Validating, it)
 		case StatusScheduled:
 			repOut.Scheduled = append(repOut.Scheduled, it)
 		case StatusPaused:
@@ -413,33 +420,36 @@ func statusPriority(s DownloadStatus) int {
 	switch s {
 	case StatusActive:
 		return 1
-	case StatusStaging:
+	case StatusValidating:
 		return 2
-	case StatusCommitting:
+	case StatusStaging:
 		return 3
-	case StatusCorrupt:
+	case StatusCommitting:
 		return 4
-	case StatusError:
+	case StatusCorrupt:
 		return 5
-	case StatusPaused:
+	case StatusError:
 		return 6
-	case StatusQueued:
+	case StatusPaused:
 		return 7
-	case StatusScheduled:
+	case StatusQueued:
 		return 8
-	case StatusCompleted:
+	case StatusScheduled:
 		return 9
-	default:
+	case StatusCompleted:
 		return 10
+	default:
+		return 11
 	}
 }
 
 var (
-	rxContentError = regexp.MustCompile(`\[([^\]]+)\] AppID (\d+) update canceled : (.*)`)
-	rxContentState = regexp.MustCompile(`\[([^\]]+)\] AppID (\d+) state changed : (.*)`)
+	rxContentError       = regexp.MustCompile(`\[([^\]]+)\] AppID (\d+) update canceled : (.*)`)
+	rxContentState       = regexp.MustCompile(`\[([^\]]+)\] AppID (\d+) state changed : (.*)`)
+	rxContentUpdatePhase = regexp.MustCompile(`\[([^\]]+)\] AppID (\d+)(?: (App|Workshop|Shader))? update changed : (.*)`)
 )
 
-func scanRecentLogs(roots []string, itemMap map[string]*DownloadItem) {
+func scanRecentLogs(roots []string, itemMap map[string]*DownloadItem, rep *Report) {
 	for _, root := range roots {
 		contentLog := filepath.Join(root, "logs", "content_log.txt")
 		f, err := os.Open(contentLog)
@@ -448,8 +458,8 @@ func scanRecentLogs(roots []string, itemMap map[string]*DownloadItem) {
 		}
 		defer f.Close()
 
-		// Read last 200 lines
-		lines := tailLines(f, 200)
+		// Read last 300 lines
+		lines := tailLines(f, 300)
 		for _, line := range lines {
 			if m := rxContentError.FindStringSubmatch(line); m != nil {
 				appID := m[2]
@@ -464,6 +474,49 @@ func scanRecentLogs(roots []string, itemMap map[string]*DownloadItem) {
 						it.Status = StatusError
 					}
 					it.ErrorDetail = reason
+				}
+			}
+
+			// Track validation in progress: "App update changed : Running Update,Verifying Installed,"
+			if m := rxContentUpdatePhase.FindStringSubmatch(line); m != nil {
+				appID := m[2]
+				phase := strings.TrimSpace(m[4])
+				key := "game:" + appID
+				if strings.Contains(phase, "Verifying") {
+					name := "AppID " + appID
+					if rep != nil {
+						for _, a := range rep.Apps {
+							if a.AppID == appID {
+								name = a.Name
+								break
+							}
+						}
+					}
+					if it, ok := itemMap[key]; ok {
+						it.Status = StatusValidating
+						if it.ErrorDetail == "" || it.ErrorDetail == "-" {
+							it.ErrorDetail = "Validating files"
+						}
+					} else {
+						itemMap[key] = &DownloadItem{
+							AppID:       appID,
+							Name:        name,
+							Type:        "game",
+							Status:      StatusValidating,
+							Source:      "content_log",
+							ErrorDetail: "Validating files",
+						}
+					}
+				} else if phase == "None" {
+					// Finished update or validation
+					if it, ok := itemMap[key]; ok && it.Status == StatusValidating {
+						if it.Source == "content_log" {
+							delete(itemMap, key)
+						} else {
+							it.Status = StatusCompleted
+							it.ErrorDetail = "Validation finished"
+						}
+					}
 				}
 			}
 		}

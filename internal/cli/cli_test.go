@@ -1760,3 +1760,33 @@ func TestDownloadsBatchActions(t *testing.T) {
 	}
 }
 
+func TestDownloadsShowsValidating(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	steamapps := filepath.Join(root, "steamapps")
+	logsDir := filepath.Join(root, "logs")
+	_ = os.MkdirAll(steamapps, 0755)
+	_ = os.MkdirAll(logsDir, 0755)
+
+	mockManifest := `"AppState" {
+		"appid" "3240220"
+		"name" "Grand Theft Auto V Enhanced"
+		"StateFlags" "4"
+	}`
+	_ = os.WriteFile(filepath.Join(steamapps, "appmanifest_3240220.acf"), []byte(mockManifest), 0644)
+
+	// Simulate active validation in content_log.txt
+	contentLog := `[2026-09-17 22:50:52] Start validating appID 3240220 on BuildID 25261616
+[2026-09-17 22:50:52] AppID 3240220 App update changed : Running Update,Verifying Installed,`
+	_ = os.WriteFile(filepath.Join(logsDir, "content_log.txt"), []byte(contentLog), 0644)
+
+	out, err := execute(t, "downloads", "--root", root)
+	if err != nil {
+		t.Fatalf("downloads error: %v", err)
+	}
+	if !strings.Contains(out, "VALIDATING") || !strings.Contains(out, "3240220") {
+		t.Errorf("expected VALIDATING status in downloads output, got:\n%s", out)
+	}
+}
+
+
