@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"steamcli.local/steam/internal/steamvdf"
 )
 
 // PurgedArtifact represents a specific file or directory removed during uninstallation.
@@ -440,6 +442,243 @@ func PurgeAppFiles(roots []string, appID string, installDirHint string, purgeNon
 
 	return result, nil
 }
+
+// PurgeWorkshopItem finds and removes a specific workshop item (content folder, download staging,
+// and removes its entry from all appworkshop_<appid>.acf files).
+func PurgeWorkshopItem(roots []string, itemID string) (*PurgeResult, error) {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return nil, fmt.Errorf("workshop itemID cannot be empty")
+	}
+	if _, err := strconv.ParseUint(itemID, 10, 64); err != nil {
+		return nil, fmt.Errorf("invalid workshop itemID %q: must be positive integer", itemID)
+	}
+
+	if len(roots) == 0 {
+		roots = Defaults()
+	}
+
+	rep, err := Scan(roots)
+	var libraries []string
+	if err == nil {
+		libraries = rep.Libraries
+	}
+	seenLibs := make(map[string]bool)
+	for _, l := range libraries {
+		clean := filepath.Clean(l)
+		seenLibs[clean] = true
+		libraries = append(libraries, clean)
+	}
+	for _, r := range roots {
+		clean := filepath.Clean(r)
+		if !seenLibs[clean] {
+			seenLibs[clean] = true
+			libraries = append(libraries, clean)
+		}
+	}
+
+	result := &PurgeResult{
+		AppID: itemID,
+		Name:  "Workshop Item " + itemID,
+	}
+
+	var candidateTargets []PurgedArtifact
+	var manifestsToUpdate []string
+
+	for _, lib := range libraries {
+		workshopDir := filepath.Join(lib, "steamapps", "workshop")
+		if _, err := os.Stat(workshopDir); err != nil {
+			if filepath.Base(lib) == "workshop" {
+				workshopDir = lib
+			} else {
+				continue
+			}
+		}
+
+		// 1. Content: steamapps/workshop/content/*/<itemID>
+		contentMatches, err := filepath.Glob(filepath.Join(workshopDir, "content", "*", itemID))
+		if err == nil {
+			for _, m := range contentMatches {
+				candidateTargets = append(candidateTargets, PurgedArtifact{
+					Path:        m,
+					Category:    "workshop",
+					Description: fmt.Sprintf("Subscribed workshop item (App %s)", filepath.Base(filepath.Dir(m))),
+				})
+			}
+		}
+
+		// 2. Downloads: steamapps/workshop/downloads/*/<itemID> or steamapps/workshop/downloads/<itemID>
+		dlMatches, err := filepath.Glob(filepath.Join(workshopDir, "downloads", "*", itemID))
+		if err == nil {
+			for _, m := range dlMatches {
+				candidateTargets = append(candidateTargets, PurgedArtifact{
+					Path:        m,
+					Category:    "workshop",
+					Description: "Workshop item download staging",
+				})
+			}
+		}
+		dlDirect := filepath.Join(workshopDir, "downloads", itemID)
+		if _, err := os.Lstat(dlDirect); err == nil {
+			candidateTargets = append(candidateTargets, PurgedArtifact{
+				Path:        dlDirect,
+				Category:    "workshop",
+				Description: "Workshop item download staging",
+			})
+		}
+
+		// 3. Scan appworkshop_*.acf to clean references
+		acfFiles, err := filepath.Glob(filepath.Join(workshopDir, "appworkshop_*.acf"))
+		if err == nil {
+			for _, acf := range acfFiles {
+				if hasWorkshopItem(acf, itemID) {
+					manifestsToUpdate = append(manifestsToUpdate, acf)
+				}
+			}
+		}
+	}
+
+	seenPaths := make(map[string]bool)
+	var safeTargets []PurgedArtifact
+	for _, t := range candidateTargets {
+		clean := filepath.Clean(t.Path)
+		if seenPaths[clean] {
+			continue
+		}
+		seenPaths[clean] = true
+		if !isSafePurgePath(clean) {
+			result.Errors = append(result.Errors, fmt.Sprintf("refusing to purge dangerous path: %s", clean))
+			continue
+		}
+		sz, cnt := calculateDirSize(clean)
+		t.Path = clean
+		t.BytesFreed = sz
+		result.TotalBytes += sz
+		result.TotalFiles += cnt
+		safeTargets = append(safeTargets, t)
+	}
+
+	for _, t := range safeTargets {
+		err := os.RemoveAll(t.Path)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("failed to remove %s: %v", t.Path, err))
+		} else {
+			result.Artifacts = append(result.Artifacts, t)
+		}
+	}
+
+	// Remove item entry from appworkshop manifests
+	for _, acf := range manifestsToUpdate {
+		if err := removeWorkshopItemFromACF(acf, itemID); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("failed to update %s: %v", filepath.Base(acf), err))
+		} else {
+			result.Artifacts = append(result.Artifacts, PurgedArtifact{
+				Path:        acf,
+				Category:    "workshop",
+				Description: "Unregistered item from " + filepath.Base(acf),
+			})
+		}
+	}
+
+	return result, nil
+}
+
+func hasWorkshopItem(path, itemID string) bool {
+	m, err := parse(path)
+	if err != nil {
+		return false
+	}
+	root, ok := m["AppWorkshop"].(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, sec := range []string{"WorkshopItemsInstalled", "WorkshopItemDetails"} {
+		if items, ok := root[sec].(map[string]any); ok {
+			if _, exists := items[itemID]; exists {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func removeWorkshopItemFromACF(path, itemID string) error {
+	m, err := parse(path)
+	if err != nil {
+		return err
+	}
+	root, ok := m["AppWorkshop"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	modified := false
+	for _, sec := range []string{"WorkshopItemsInstalled", "WorkshopItemDetails"} {
+		if items, ok := root[sec].(map[string]any); ok {
+			if _, exists := items[itemID]; exists {
+				delete(items, itemID)
+				modified = true
+			}
+		}
+	}
+	if modified {
+		return steamvdf.Write(path, m)
+	}
+	return nil
+}
+
+// FindDLCBaseGame checks if the given dlcAppID is a registered DLC under any installed game.
+// It returns the base game's AppID and App title if found.
+func FindDLCBaseGame(roots []string, dlcAppID string) (baseAppID string, baseGameName string, found bool) {
+	if len(roots) == 0 {
+		roots = Defaults()
+	}
+	rep, err := Scan(roots)
+	if err != nil {
+		return "", "", false
+	}
+	for _, a := range rep.Apps {
+		if a.Manifest == "" {
+			continue
+		}
+		m, err := parse(a.Manifest)
+		if err != nil {
+			continue
+		}
+		state, ok := m["AppState"].(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, d := range readDLC(state) {
+			if d.AppID == dlcAppID {
+				return a.AppID, a.Name, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// PurgeDLC disables the DLC in the parent game's appmanifest and removes any matching DLC files
+// from the base game's common folder or depot cache.
+func PurgeDLC(roots []string, baseAppID string, dlcAppID string) (*PurgeResult, error) {
+	manifest, err := SetDLCEnabled(roots, baseAppID, dlcAppID, false)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &PurgeResult{
+		AppID: dlcAppID,
+		Name:  fmt.Sprintf("DLC %s (Base Game %s)", dlcAppID, baseAppID),
+	}
+
+	result.Artifacts = append(result.Artifacts, PurgedArtifact{
+		Path:        manifest,
+		Category:    "manifest",
+		Description: fmt.Sprintf("Disabled DLC in base game (%s) manifest", baseAppID),
+	})
+
+	return result, nil
+}
+
 
 // isSafePurgePath performs sanity checks to prevent accidental deletions of critical system or library root directories.
 func isSafePurgePath(p string) bool {

@@ -344,3 +344,71 @@ func TestIsSafePurgePath(t *testing.T) {
 	}
 }
 
+func TestPurgeWorkshopItem(t *testing.T) {
+	root := t.TempDir()
+	wsDir := filepath.Join(root, "steamapps", "workshop")
+	itemDir := filepath.Join(wsDir, "content", "4000", "987654321")
+	_ = os.MkdirAll(itemDir, 0755)
+	_ = os.WriteFile(filepath.Join(itemDir, "mod.gma"), []byte("gmod addon"), 0644)
+
+	acfPath := filepath.Join(wsDir, "appworkshop_4000.acf")
+	acfContent := `"AppWorkshop" {
+		"appid" "4000"
+		"WorkshopItemsInstalled" {
+			"987654321" { "size" "1024" }
+		}
+	}`
+	_ = os.WriteFile(acfPath, []byte(acfContent), 0644)
+
+	res, err := PurgeWorkshopItem([]string{root}, "987654321")
+	if err != nil {
+		t.Fatalf("PurgeWorkshopItem failed: %v", err)
+	}
+
+	if len(res.Artifacts) == 0 {
+		t.Fatalf("expected workshop artifacts to be purged")
+	}
+
+	// Verify item directory is deleted
+	if _, err := os.Stat(itemDir); !os.IsNotExist(err) {
+		t.Errorf("expected %s to be deleted", itemDir)
+	}
+
+	// Verify ACF was updated
+	if hasWorkshopItem(acfPath, "987654321") {
+		t.Errorf("expected 987654321 to be removed from %s", acfPath)
+	}
+}
+
+func TestPurgeDLC(t *testing.T) {
+	root := t.TempDir()
+	writeVDF(t, root, "steamapps/libraryfolders.vdf",
+		`"libraryfolders" { "0" { "path" "`+root+`" } }`)
+	manifest := `"AppState" {
+		"appid" "100"
+		"name" "Base Game"
+		"installdir" "BaseGame"
+		"InstalledDepots" {
+			"101" {
+				"dlcappid" "200"
+				"size" "500"
+			}
+		}
+	}`
+	writeVDF(t, root, "steamapps/appmanifest_100.acf", manifest)
+
+	baseID, baseName, found := FindDLCBaseGame([]string{root}, "200")
+	if !found || baseID != "100" || baseName != "Base Game" {
+		t.Fatalf("FindDLCBaseGame failed: found=%v, baseID=%s, baseName=%s", found, baseID, baseName)
+	}
+
+	res, err := PurgeDLC([]string{root}, baseID, "200")
+	if err != nil {
+		t.Fatalf("PurgeDLC failed: %v", err)
+	}
+	if len(res.Artifacts) == 0 {
+		t.Fatalf("expected DLC purge artifacts")
+	}
+}
+
+

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -165,83 +166,156 @@ func newUninstallCommand(o *options, clientRun func(cmd *cobra.Command, args []s
 	var installDirHint string
 
 	cmd := &cobra.Command{
-		Use:     "uninstall APPID",
+		Use:     "uninstall APPID_OR_ITEMID [APPID_OR_ITEMID...]",
 		Aliases: []string{"remove", "purge"},
-		Short:   "Uninstall a game via Steam client or thoroughly purge all files (--force / --purge)",
-		Long: "Uninstall a game.\n\n" +
-			"By default, forwards to the running Steam client via steam://uninstall/<APPID>.\n" +
+		Short:   "Uninstall games, DLCs, or workshop items via Steam client or thoroughly purge all files (--force / --purge)",
+		Long: "Uninstall games, DLCs, or Workshop items.\n\n" +
+			"Accepts one or more AppIDs, Workshop Item IDs, or game names.\n" +
+			"If a Workshop Item ID is provided, removes the workshop item files and unregisters it.\n" +
+			"If a DLC AppID is provided, disables and unregisters the DLC from the parent game.\n\n" +
+			"By default, forwards game uninstallation to the running Steam client via steam://uninstall/<APPID>.\n" +
 			"With --force / -f, it instructs the Steam client to uninstall AND physically purges all\n" +
 			"related files across all libraries: installation files, appmanifest, compatdata prefixes,\n" +
 			"shader cache, download staging, workshop items, and user cloud saves.\n\n" +
 			"With --purge / -p, it also finds and deletes external non-Steam save files, configs,\n" +
 			"and application data in OS directories (~/.config, ~/.local/share, ~/Documents, Saved Games).",
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appIDInt, resolvedName, err := o.resolveAppIDAndName(cmd.Context(), args[0], cmd.ErrOrStderr())
-			if err != nil {
-				return err
-			}
-			appID := strconv.Itoa(appIDInt)
-
-			if !force && !purge {
-				u, err := steamclient.URL("uninstall", appID)
-				if err != nil {
-					return err
-				}
-				if clientRun != nil {
-					return clientRun(cmd, []string{u})
-				}
-				return nil
-			}
-
-			// Force or purge mode: notify client if available, then purge all files across libraries
-			clientNotified := false
-			if clientRun != nil {
-				u, err := steamclient.URL("uninstall", appID)
-				if err == nil {
-					_ = clientRun(cmd, []string{u})
-					clientNotified = true
-				}
-			}
-
 			r := roots
 			if len(r) == 0 {
 				r = library.Defaults()
 			}
 
-			hint := installDirHint
-			if hint == "" && resolvedName != "" {
-				hint = resolvedName
-			}
+			combinedResult := &library.PurgeResult{}
+			var targetSummaries []string
 
-			purgeRes, err := library.PurgeAppFiles(r, appID, hint, purge)
-			if err != nil {
-				return err
-			}
-			if purgeRes.Name == "" && resolvedName != "" {
-				purgeRes.Name = resolvedName
-			}
-			purgeRes.ClientNotified = clientNotified
+			for _, arg := range args {
+				arg = strings.TrimSpace(arg)
+				if arg == "" {
+					continue
+				}
 
-			return o.emit(cmd, purgeRes, func(w io.Writer) {
-				if len(purgeRes.Artifacts) == 0 {
-					gameLabel := appID
-					if purgeRes.Name != "" {
-						gameLabel = fmt.Sprintf("%s (%s)", purgeRes.Name, appID)
+				// Check if arg is a Workshop Item ID
+				if isWorkshopItemID(r, arg) {
+					if !force && !purge {
+						// In non-force mode, ask if they want to force or unsubscribe
+						fmt.Fprintf(cmd.ErrOrStderr(), "%s %q identified as Workshop Item %s. Use --force to purge its files.\n",
+							yellow.Sprint("Notice:"), arg, arg)
+						continue
 					}
-					fmt.Fprintf(w, "%s No leftover files or directories found for %s.\n", green.Sprint("Clean:"), gameLabel)
+					purgeRes, err := library.PurgeWorkshopItem(r, arg)
+					if err != nil {
+						combinedResult.Errors = append(combinedResult.Errors, fmt.Sprintf("workshop item %s: %v", arg, err))
+						continue
+					}
+					combinedResult.Artifacts = append(combinedResult.Artifacts, purgeRes.Artifacts...)
+					combinedResult.TotalBytes += purgeRes.TotalBytes
+					combinedResult.TotalFiles += purgeRes.TotalFiles
+					combinedResult.Errors = append(combinedResult.Errors, purgeRes.Errors...)
+					targetSummaries = append(targetSummaries, fmt.Sprintf("Workshop Item %s", arg))
+					continue
+				}
+
+				// Check if arg is a DLC ID of an installed base game
+				if baseID, baseName, ok := library.FindDLCBaseGame(r, arg); ok {
+					purgeRes, err := library.PurgeDLC(r, baseID, arg)
+					if err != nil {
+						combinedResult.Errors = append(combinedResult.Errors, fmt.Sprintf("DLC %s (base %s): %v", arg, baseID, err))
+						continue
+					}
+					combinedResult.Artifacts = append(combinedResult.Artifacts, purgeRes.Artifacts...)
+					combinedResult.TotalBytes += purgeRes.TotalBytes
+					combinedResult.TotalFiles += purgeRes.TotalFiles
+					combinedResult.Errors = append(combinedResult.Errors, purgeRes.Errors...)
+					targetSummaries = append(targetSummaries, fmt.Sprintf("DLC %s (%s)", arg, baseName))
+					continue
+				}
+
+				// Otherwise treat as Game AppID or Game Title
+				appIDInt, resolvedName, err := o.resolveAppIDAndName(cmd.Context(), arg, cmd.ErrOrStderr())
+				if err != nil {
+					combinedResult.Errors = append(combinedResult.Errors, fmt.Sprintf("%q: %v", arg, err))
+					continue
+				}
+				appID := strconv.Itoa(appIDInt)
+
+				if !force && !purge {
+					u, err := steamclient.URL("uninstall", appID)
+					if err != nil {
+						combinedResult.Errors = append(combinedResult.Errors, fmt.Sprintf("AppID %s: %v", appID, err))
+						continue
+					}
+					if clientRun != nil {
+						if err := clientRun(cmd, []string{u}); err != nil {
+							combinedResult.Errors = append(combinedResult.Errors, fmt.Sprintf("client uninstall %s: %v", appID, err))
+						} else {
+							targetSummaries = append(targetSummaries, fmt.Sprintf("AppID %s (client notified)", appID))
+						}
+					}
+					continue
+				}
+
+				// Force or purge mode
+				clientNotified := false
+				if clientRun != nil {
+					u, err := steamclient.URL("uninstall", appID)
+					if err == nil {
+						_ = clientRun(cmd, []string{u})
+						clientNotified = true
+					}
+				}
+
+				hint := installDirHint
+				if hint == "" && resolvedName != "" {
+					hint = resolvedName
+				}
+
+				purgeRes, err := library.PurgeAppFiles(r, appID, hint, purge)
+				if err != nil {
+					combinedResult.Errors = append(combinedResult.Errors, fmt.Sprintf("AppID %s: %v", appID, err))
+					continue
+				}
+				if purgeRes.Name == "" && resolvedName != "" {
+					purgeRes.Name = resolvedName
+				}
+				purgeRes.ClientNotified = clientNotified
+
+				combinedResult.Artifacts = append(combinedResult.Artifacts, purgeRes.Artifacts...)
+				combinedResult.TotalBytes += purgeRes.TotalBytes
+				combinedResult.TotalFiles += purgeRes.TotalFiles
+				combinedResult.Errors = append(combinedResult.Errors, purgeRes.Errors...)
+
+				label := appID
+				if purgeRes.Name != "" {
+					label = fmt.Sprintf("%s (%s)", purgeRes.Name, appID)
+				}
+				targetSummaries = append(targetSummaries, label)
+			}
+
+			if !force && !purge {
+				return o.emit(cmd, map[string]any{"targets": targetSummaries, "errors": combinedResult.Errors}, func(w io.Writer) {
+					for _, t := range targetSummaries {
+						fmt.Fprintf(w, "%s %s\n", green.Sprint("Started:"), t)
+					}
+					for _, e := range combinedResult.Errors {
+						fmt.Fprintf(cmd.ErrOrStderr(), "%s %s\n", yellow.Sprint("Warning:"), e)
+					}
+				})
+			}
+
+			return o.emit(cmd, combinedResult, func(w io.Writer) {
+				if len(combinedResult.Artifacts) == 0 {
+					fmt.Fprintf(w, "%s No leftover files or directories found for %s.\n",
+						green.Sprint("Clean:"), strings.Join(targetSummaries, ", "))
 				} else {
-					title := fmt.Sprintf("Purged Files & Artifacts for AppID %s", appID)
-					if purgeRes.Name != "" {
-						title = fmt.Sprintf("Purged Files & Artifacts for %s (%s)", purgeRes.Name, appID)
-					}
+					title := fmt.Sprintf("Purged Files & Artifacts (%s)", strings.Join(targetSummaries, ", "))
 					o.heading(w, "%s", title)
 					t := o.newTable(w)
 					t.AppendHeader(table.Row{"Category", "Path", "Size", "Description"})
 					t.SetColumnConfigs([]table.ColumnConfig{
 						{Number: 3, Align: text.AlignRight},
 					})
-					for _, art := range purgeRes.Artifacts {
+					for _, art := range combinedResult.Artifacts {
 						sizeStr := ""
 						if art.BytesFreed > 0 {
 							sizeStr = o.sizeCell(art.BytesFreed)
@@ -256,12 +330,12 @@ func newUninstallCommand(o *options, clientRun func(cmd *cobra.Command, args []s
 					o.renderTable(t)
 					if o.format != "csv" {
 						fmt.Fprintf(w, "\n%s Removed %d artifact(s), reclaimed %s.\n",
-							green.Sprint("Success:"), len(purgeRes.Artifacts), o.sizeCell(purgeRes.TotalBytes))
+							green.Sprint("Success:"), len(combinedResult.Artifacts), o.sizeCell(combinedResult.TotalBytes))
 					}
 				}
 
-				if len(purgeRes.Errors) > 0 {
-					for _, e := range purgeRes.Errors {
+				if len(combinedResult.Errors) > 0 {
+					for _, e := range combinedResult.Errors {
 						fmt.Fprintf(cmd.ErrOrStderr(), "%s %s\n", yellow.Sprint("Warning:"), e)
 					}
 				}
@@ -275,6 +349,32 @@ func newUninstallCommand(o *options, clientRun func(cmd *cobra.Command, args []s
 	cmd.Flags().StringVar(&installDirHint, "dir", "", "Explicit game installation directory path if not discoverable via manifest")
 
 	return cmd
+}
+
+func isWorkshopItemID(roots []string, id string) bool {
+	if _, err := strconv.ParseUint(id, 10, 64); err != nil {
+		return false
+	}
+	rep, err := library.Scan(roots)
+	var libraries []string
+	if err == nil {
+		libraries = rep.Libraries
+	}
+	for _, r := range roots {
+		libraries = append(libraries, r)
+	}
+	for _, lib := range libraries {
+		// Check if content/<appID>/<id> or downloads/<id> exists
+		matches, err := filepath.Glob(filepath.Join(lib, "steamapps", "workshop", "content", "*", id))
+		if err == nil && len(matches) > 0 {
+			return true
+		}
+		dlMatches, err := filepath.Glob(filepath.Join(lib, "steamapps", "workshop", "downloads", "*", id))
+		if err == nil && len(dlMatches) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 
