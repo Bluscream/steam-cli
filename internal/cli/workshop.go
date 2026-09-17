@@ -681,8 +681,82 @@ func workshopCommand(o *options) *cobra.Command {
 	}
 	deleteColl.Flags().BoolVar(&confirmDelete, "yes", false, "Confirm the deletion")
 
+	// 11. Sync subscriptions with collection
+	syncCmd := &cobra.Command{
+		Use:   "sync APPID COLLECTION_ID",
+		Short: "Synchronize subscriptions with a collection (subscribe missing, unsubscribe extraneous)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			appID, err := appIDArg(cmd, args[0])
+			if err != nil {
+				return err
+			}
+			wc, err := workshopClient()
+			if err != nil {
+				return err
+			}
+			if !wc.HasSession() {
+				return community.ErrNoSession
+			}
+
+			// Get collection target items
+			coll, err := wc.GetCollectionDetails(cmd.Context(), args[1])
+			if err != nil {
+				return fmt.Errorf("fetch collection %s: %w", args[1], err)
+			}
+			targetMap := make(map[string]bool)
+			for _, ch := range coll.Children {
+				targetMap[ch.PublishedFileID] = true
+			}
+
+			// Get current subscriptions
+			currentSubs, err := wc.ListUserItems(cmd.Context(), appID, community.FilterSubscriptions)
+			if err != nil {
+				return fmt.Errorf("fetch subscriptions for %d: %w", appID, err)
+			}
+			currentMap := make(map[string]bool)
+			for _, id := range currentSubs {
+				currentMap[id] = true
+			}
+
+			var toSub, toUnsub []string
+			for _, ch := range coll.Children {
+				if !currentMap[ch.PublishedFileID] {
+					toSub = append(toSub, ch.PublishedFileID)
+				}
+			}
+			for _, id := range currentSubs {
+				if !targetMap[id] {
+					toUnsub = append(toUnsub, id)
+				}
+			}
+
+			var allResults []workshop.BatchResult
+			if len(toUnsub) > 0 {
+				unsubResults := wc.Unsubscribe(cmd.Context(), appID, toUnsub)
+				allResults = append(allResults, unsubResults...)
+			}
+			if len(toSub) > 0 {
+				subResults := wc.Subscribe(cmd.Context(), appID, toSub)
+				allResults = append(allResults, subResults...)
+			}
+
+			if len(allResults) == 0 {
+				return o.emit(cmd, map[string]any{"synced": true, "message": "Already fully in sync with collection"}, func(w io.Writer) {
+					fmt.Fprintf(w, "%s Subscriptions are already perfectly in sync with collection %s (%d items)\n",
+						green.Sprint("✓"), args[1], len(coll.Children))
+				})
+			}
+
+			if err := o.emit(cmd, summarize(allResults), o.renderBatch(allResults)); err != nil {
+				return err
+			}
+			return batchErr(allResults)
+		},
+	}
+
 	root.AddCommand(infoCmd, sub, unsub, collection, subsCmd, favsCmd, installedCmd, searchCmd, listColls,
-		createColl, editColl, addItems, removeItems, deleteColl)
+		createColl, editColl, addItems, removeItems, deleteColl, syncCmd)
 	return root
 }
 
