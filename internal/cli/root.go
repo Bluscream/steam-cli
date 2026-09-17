@@ -89,6 +89,7 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 		appsCommand(o),
 		searchCommand(o),
 		infoCommand(o),
+		authCommand(o),
 		serverCommand(o),
 	)
 

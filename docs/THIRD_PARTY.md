@@ -23,6 +23,7 @@ Runtime-linked Go modules are pinned by `go.mod` / `go.sum` and copied by `go mo
 | github.com/gofrs/flock | v0.13.1 | Cross-process file locks | `vendor/github.com/gofrs/flock/LICENSE` |
 | golang.org/x/term | v0.46.0 | Terminal detection | `vendor/golang.org/x/term/LICENSE` |
 | golang.org/x/sys | v0.48.0 | OS calls for locks/terminals | `vendor/golang.org/x/sys/LICENSE` |
+| github.com/skip2/go-qrcode | v0.0.0-20200617195104-da1b6568686e | Terminal QR code generation | `vendor/github.com/skip2/go-qrcode/LICENSE` |
 
 ## Embedded data
 

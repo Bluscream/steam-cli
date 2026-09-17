@@ -209,7 +209,14 @@ func (s Settings) AccessToken() (string, error) {
 // CommunityLoginSecure resolves the steamLoginSecure browser cookie used for
 // Community endpoints that the Web API does not expose.
 func (s Settings) CommunityLoginSecure() (string, error) {
-	return Secret(s.CommunityLoginSecureEnv, s.CommunityLoginSecureFile)
+	file := s.CommunityLoginSecureFile
+	if file == "" && s.DataDir != "" {
+		candidate := filepath.Join(s.DataDir, "steam_login_secure")
+		if _, err := os.Stat(candidate); err == nil {
+			file = candidate
+		}
+	}
+	return Secret(s.CommunityLoginSecureEnv, file)
 }
 
 // SteamUserID resolves an explicit SteamID / Steam user ID from environment or secret file.
