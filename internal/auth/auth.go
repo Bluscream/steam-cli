@@ -2,11 +2,15 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -42,6 +46,184 @@ func NewClient(h *httpx.Client) *Client {
 		HTTP:    h,
 		BaseURL: "https://api.steampowered.com",
 	}
+}
+
+// RSAPublicKey contains the encrypted parameters from Steam.
+type RSAPublicKey struct {
+	Mod       *big.Int
+	Exp       int
+	Timestamp string
+}
+
+// GetRSAKey fetches the RSA public key for an account from Steam.
+func (c *Client) GetRSAKey(ctx context.Context, accountName string) (*RSAPublicKey, error) {
+	endpoint, err := httpx.Endpoint(c.BaseURL, "IAuthenticationService/GetPasswordRSAPublicKey/v1/", false)
+	if err != nil {
+		return nil, err
+	}
+
+	q := url.Values{"account_name": {accountName}}
+	res, err := c.HTTP.DoFull(ctx, http.MethodGet, endpoint, q, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var raw struct {
+		Response struct {
+			PublickeyMod string `json:"publickey_mod"`
+			PublickeyExp string `json:"publickey_exp"`
+			Timestamp    string `json:"timestamp"`
+		} `json:"response"`
+	}
+
+	if err := json.Unmarshal(res.Body, &raw); err != nil {
+		return nil, fmt.Errorf("decode rsa key: %w", err)
+	}
+
+	modBytes, err := hex.DecodeString(raw.Response.PublickeyMod)
+	if err != nil {
+		return nil, fmt.Errorf("decode mod: %w", err)
+	}
+	mod := new(big.Int).SetBytes(modBytes)
+
+	expBytes, err := hex.DecodeString(raw.Response.PublickeyExp)
+	if err != nil {
+		return nil, fmt.Errorf("decode exp: %w", err)
+	}
+	exp := int(new(big.Int).SetBytes(expBytes).Int64())
+
+	return &RSAPublicKey{
+		Mod:       mod,
+		Exp:       exp,
+		Timestamp: raw.Response.Timestamp,
+	}, nil
+}
+
+// EncryptPassword encrypts a plaintext password with the Steam RSA public key.
+func EncryptPassword(password string, key *RSAPublicKey) (string, error) {
+	pub := &rsa.PublicKey{
+		N: key.Mod,
+		E: key.Exp,
+	}
+	encrypted, err := rsa.EncryptPKCS1v15(rand.Reader, pub, []byte(password))
+	if err != nil {
+		return "", fmt.Errorf("rsa encrypt: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(encrypted), nil
+}
+
+// CredentialsChallenge contains the session state for credentials login.
+type CredentialsChallenge struct {
+	ClientID             string
+	RequestID            string
+	SteamID              string
+	Interval             time.Duration
+	AllowedConfirmations []int
+}
+
+// BeginCredentials starts an authentication session with username and encrypted password.
+func (c *Client) BeginCredentials(ctx context.Context, accountName, password string) (*CredentialsChallenge, error) {
+	key, err := c.GetRSAKey(ctx, accountName)
+	if err != nil {
+		return nil, fmt.Errorf("fetch rsa key: %w", err)
+	}
+
+	encryptedPass, err := EncryptPassword(password, key)
+	if err != nil {
+		return nil, err
+	}
+
+	endpoint, err := httpx.Endpoint(c.BaseURL, "IAuthenticationService/BeginAuthSessionViaCredentials/v1/", false)
+	if err != nil {
+		return nil, err
+	}
+
+	form := url.Values{
+		"device_friendly_name":                 {"steam-cli"},
+		"account_name":                         {accountName},
+		"encrypted_password":                   {encryptedPass},
+		"encryption_timestamp":                 {key.Timestamp},
+		"remember_login":                       {"true"},
+		"platform_type":                        {"1"},
+		"persistence":                          {"1"},
+		"device_details[device_friendly_name]": {"steam-cli"},
+		"device_details[platform_type]":        {"1"},
+	}
+
+	res, err := c.HTTP.DoFull(ctx, http.MethodPost, endpoint, nil, []byte(form.Encode()), map[string][]string{
+		"Content-Type": {"application/x-www-form-urlencoded"},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var raw struct {
+		Response struct {
+			ClientID             string `json:"client_id"`
+			RequestID            string `json:"request_id"`
+			SteamID              string `json:"steamid"`
+			Interval             int    `json:"interval"`
+			AllowedConfirmations []struct {
+				ConfirmationType int `json:"confirmation_type"`
+			} `json:"allowed_confirmations"`
+		} `json:"response"`
+	}
+
+	if err := json.Unmarshal(res.Body, &raw); err != nil {
+		return nil, fmt.Errorf("decode credentials response: %w", err)
+	}
+
+	if raw.Response.ClientID == "" {
+		return nil, errors.New("steam rejected credentials or requires captcha")
+	}
+
+	interval := time.Duration(raw.Response.Interval) * time.Second
+	if interval < time.Second {
+		interval = 3 * time.Second
+	}
+
+	var confs []int
+	for _, ac := range raw.Response.AllowedConfirmations {
+		confs = append(confs, ac.ConfirmationType)
+	}
+
+	return &CredentialsChallenge{
+		ClientID:             raw.Response.ClientID,
+		RequestID:            raw.Response.RequestID,
+		SteamID:              raw.Response.SteamID,
+		Interval:             interval,
+		AllowedConfirmations: confs,
+	}, nil
+}
+
+// SubmitSteamGuardCode sends a 2FA code (email code = 2, TOTP mobile authenticator = 3) to Steam.
+func (c *Client) SubmitSteamGuardCode(ctx context.Context, clientID, steamID, code string, codeType int) error {
+	endpoint, err := httpx.Endpoint(c.BaseURL, "IAuthenticationService/UpdateAuthSessionWithSteamGuardCode/v1/", false)
+	if err != nil {
+		return err
+	}
+
+	form := url.Values{
+		"client_id": {clientID},
+		"steamid":   {steamID},
+		"code":      {strings.TrimSpace(code)},
+		"code_type": {fmt.Sprint(codeType)},
+	}
+
+	res, err := c.HTTP.DoFull(ctx, http.MethodPost, endpoint, nil, []byte(form.Encode()), map[string][]string{
+		"Content-Type": {"application/x-www-form-urlencoded"},
+	})
+	if err != nil {
+		return err
+	}
+
+	var raw struct {
+		Response map[string]any `json:"response"`
+	}
+	if err := json.Unmarshal(res.Body, &raw); err != nil {
+		return fmt.Errorf("decode guard submit: %w", err)
+	}
+	return nil
 }
 
 // BeginQR starts an auth session with Steam's mobile QR challenge.
@@ -88,8 +270,8 @@ func (c *Client) BeginQR(ctx context.Context) (clientID string, challengeURL str
 	return raw.Response.ClientID, raw.Response.ChallengeURL, raw.Response.RequestID, pollInterval, nil
 }
 
-// PollQR polls until the mobile app approves the QR challenge or context expires.
-func (c *Client) PollQR(ctx context.Context, clientID, requestID string, interval time.Duration) (*Session, error) {
+// PollSession polls until Steam approves the challenge or context expires.
+func (c *Client) PollSession(ctx context.Context, clientID, requestID string, interval time.Duration) (*Session, error) {
 	endpoint, err := httpx.Endpoint(c.BaseURL, "IAuthenticationService/PollAuthSessionStatus/v1/", false)
 	if err != nil {
 		return nil, err
@@ -187,7 +369,7 @@ func OpenBrowser(targetURL string) error {
 	return cmd.Start()
 }
 
-// BrowserFlow launches a local loopback server and instructions for the user to submit steamLoginSecure.
+// BrowserFlow launches a local loopback server.
 func BrowserFlow(ctx context.Context, port int) (*Session, error) {
 	if port <= 0 {
 		port = 20888
@@ -195,7 +377,6 @@ func BrowserFlow(ctx context.Context, port int) (*Session, error) {
 
 	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
-		// Fallback to random port if 20888 is busy
 		listener, err = net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			return nil, fmt.Errorf("listen loopback: %w", err)
@@ -213,79 +394,9 @@ func BrowserFlow(ctx context.Context, port int) (*Session, error) {
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				fmt.Fprint(w, `<!DOCTYPE html>
-<html>
-<head>
-<title>steam-cli Authentication</title>
-<style>
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #171d25; color: #c5c3c0; margin: 40px auto; max-width: 650px; padding: 20px; line-height: 1.6; }
-h1 { color: #fff; border-bottom: 2px solid #66c0f4; padding-bottom: 8px; }
-input[type=text] { width: 100%; padding: 12px; margin: 10px 0; box-sizing: border-box; background: #2a475e; border: 1px solid #101822; color: #fff; border-radius: 4px; font-family: monospace; font-size: 14px; }
-button { background: linear-gradient( to right, #47bfff 5%, #1a44c2 95%); color: #fff; padding: 12px 24px; border: none; border-radius: 3px; cursor: pointer; font-size: 16px; font-weight: bold; }
-button:hover { background: #66c0f4; }
-.card { background: #1b2838; padding: 20px; border-radius: 6px; box-shadow: 0 4px 8px rgba(0,0,0,0.3); margin-top: 20px; }
-a { color: #66c0f4; text-decoration: none; }
-a:hover { text-decoration: underline; }
-code { background: #0e141b; padding: 2px 6px; border-radius: 3px; color: #a4d007; font-family: monospace; }
-</style>
-</head>
-<body>
-<h1>steam-cli Session Authorization</h1>
-<div class="card">
-<p>Sign in to <a href="https://steamcommunity.com" target="_blank"><strong>steamcommunity.com</strong></a> in your browser.</p>
-<p>Then copy your <code>steamLoginSecure</code> cookie (from <em>DevTools (F12) &gt; Storage/Application &gt; Cookies</em>) and paste it below:</p>
-<form method="POST" action="/submit">
-<label for="cookie"><strong>steamLoginSecure Cookie Value:</strong></label><br>
-<input type="text" id="cookie" name="cookie" placeholder="76561198...||eyAidHlwIjog..." required autocomplete="off">
-<br><br>
-<button type="submit">Authorize steam-cli</button>
-</form>
-</div>
-</body>
-</html>`)
+				fmt.Fprint(w, `<!DOCTYPE html><html><body><h2>steam-cli Session Receiver</h2></body></html>`)
 				return
 			}
-
-			if r.Method == http.MethodPost && r.URL.Path == "/submit" {
-				if err := r.ParseForm(); err != nil {
-					http.Error(w, "invalid form", http.StatusBadRequest)
-					return
-				}
-				cookie := strings.TrimSpace(r.FormValue("cookie"))
-				if cookie == "" {
-					http.Error(w, "cookie cannot be empty", http.StatusBadRequest)
-					return
-				}
-
-				// Basic validation
-				steamID := ""
-				val := cookie
-				if d, e := url.QueryUnescape(val); e == nil {
-					val = d
-				}
-				parts := strings.Split(val, "||")
-				if len(parts) > 0 {
-					steamID = strings.TrimSpace(parts[0])
-				}
-
-				sess := &Session{
-					SteamID:          steamID,
-					SteamLoginSecure: cookie,
-				}
-
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				fmt.Fprint(w, `<!DOCTYPE html>
-<html>
-<head><title>Success</title><style>body { font-family: sans-serif; background: #171d25; color: #a4d007; text-align: center; padding: 50px; }</style></head>
-<body>
-<h2>&#10004; Authentication Received!</h2>
-<p style="color: #c5c3c0;">You can now close this browser tab and return to your terminal.</p>
-</body>
-</html>`)
-				resultChan <- sess
-				return
-			}
-
 			http.NotFound(w, r)
 		}),
 	}
