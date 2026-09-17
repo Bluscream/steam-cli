@@ -25,6 +25,7 @@ type Client struct {
 type StatusError struct {
 	Code       int
 	RetryAfter string
+	Location   string
 }
 
 func (e *StatusError) Error() string {
@@ -145,7 +146,9 @@ func (c *Client) DoFull(ctx context.Context, method, endpoint string, q url.Valu
 			}
 		}
 	}
-	u.RawQuery = q.Encode()
+	if q != nil {
+		u.RawQuery = q.Encode()
+	}
 	for attempt := 0; ; attempt++ {
 		req, e := http.NewRequestWithContext(ctx, method, u.String(), bytes.NewReader(body))
 		if e != nil {
@@ -189,8 +192,9 @@ func (c *Client) DoFull(ctx context.Context, method, endpoint string, q url.Valu
 				delay = 0
 			}
 			if delay > 30*time.Second {
+				loc := resp.Header.Get("Location")
 				resp.Body.Close()
-				return Response{}, &StatusError{resp.StatusCode, resp.Header.Get("Retry-After")}
+				return Response{}, &StatusError{resp.StatusCode, resp.Header.Get("Retry-After"), loc}
 			}
 			resp.Body.Close()
 			t := time.NewTimer(delay)
@@ -203,8 +207,9 @@ func (c *Client) DoFull(ctx context.Context, method, endpoint string, q url.Valu
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			loc := resp.Header.Get("Location")
 			resp.Body.Close()
-			return Response{}, &StatusError{resp.StatusCode, resp.Header.Get("Retry-After")}
+			return Response{}, &StatusError{resp.StatusCode, resp.Header.Get("Retry-After"), loc}
 		}
 		b, e := io.ReadAll(io.LimitReader(resp.Body, MaxBody+1))
 		resp.Body.Close()

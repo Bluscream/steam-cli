@@ -224,10 +224,16 @@ func (c *Client) ListWorkshopFiles(ctx context.Context, appID int, filter string
 		r, e := c.HTTP.DoFull(ctx, http.MethodGet, endpoint, q, nil, c.headers("text/html,application/xhtml+xml"))
 		if e != nil {
 			var se *httpx.StatusError
-			if errors.As(e, &se) && (se.Code == 302 || se.Code == 401 || se.Code == 403) {
-				return nil, fmt.Errorf("%w (Steam rejected the session: HTTP %d)", ErrNoSession, se.Code)
+			if errors.As(e, &se) && se.Code == 302 && se.Location != "" && !strings.Contains(se.Location, "/login/") {
+				// Steam 302-redirected from /profiles/<steamid>/ to /id/<vanity>/
+				r, e = c.HTTP.DoFull(ctx, http.MethodGet, se.Location, nil, nil, c.headers("text/html,application/xhtml+xml"))
 			}
-			return nil, e
+			if e != nil {
+				if errors.As(e, &se) && (se.Code == 302 || se.Code == 401 || se.Code == 403) {
+					return nil, fmt.Errorf("%w (Steam rejected the session: HTTP %d)", ErrNoSession, se.Code)
+				}
+				return nil, e
+			}
 		}
 
 		matches := sharedFileID.FindAllSubmatch(r.Body, -1)
