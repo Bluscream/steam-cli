@@ -89,7 +89,7 @@ func accountCommand(o *options) *cobra.Command {
 
 			return o.emit(cmd, users, func(w io.Writer) {
 				t := o.newTable(w)
-				t.AppendHeader(table.Row{"Active", "Persona Name", "Account Name", "SteamID64", "ASF Bot", "Last Logged In"})
+				t.AppendHeader(table.Row{"Active", "Persona Name", "Account Name", "ASF Bot", "SteamID64", "Last Logged In"})
 				for _, u := range users {
 					activeMarker := ""
 					if u.AutoLogin {
@@ -105,7 +105,7 @@ func accountCommand(o *options) *cobra.Command {
 					if u.ASFBot != "" {
 						botCol = cyan.Sprint(u.ASFBot)
 					}
-					t.AppendRow(table.Row{activeMarker, u.PersonaName, u.AccountName, u.SteamID64, botCol, lastUsed})
+					t.AppendRow(table.Row{activeMarker, u.PersonaName, u.AccountName, botCol, u.SteamID64, lastUsed})
 				}
 				o.renderTable(t)
 			})
