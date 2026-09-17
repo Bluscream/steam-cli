@@ -93,6 +93,7 @@ func New(in io.Reader, out, errOut io.Writer) *cobra.Command {
 		infoCommand(o),
 		authCommand(o),
 		serverCommand(o),
+		downloadsCommand(o),
 	)
 
 	// Top-level direct shortcuts and ergonomic aliases

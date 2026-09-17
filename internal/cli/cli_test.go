@@ -1660,3 +1660,45 @@ func TestAccountAndIdleCLI(t *testing.T) {
 		t.Errorf("unexpected idle stop output:\n%s", out)
 	}
 }
+
+func TestDownloadsCLI(t *testing.T) {
+	cleanEnv(t)
+	// Create mock steam library structure
+	root := t.TempDir()
+	steamapps := filepath.Join(root, "steamapps")
+	_ = os.MkdirAll(filepath.Join(steamapps, "downloading", "227300"), 0755)
+	_ = os.MkdirAll(filepath.Join(steamapps, "workshop"), 0755)
+
+	// Write mock appmanifest with update required + scheduled update
+	mockManifest := `"AppState" {
+		"appid" "227300"
+		"name" "Euro Truck Simulator 2"
+		"StateFlags" "6"
+		"BytesDownloaded" "500000"
+		"BytesToDownload" "2000000"
+		"ScheduledAutoUpdate" "1790128677"
+		"UpdateResult" "0"
+	}`
+	_ = os.WriteFile(filepath.Join(steamapps, "appmanifest_227300.acf"), []byte(mockManifest), 0644)
+
+	// Write mock workshop acf
+	mockWS := `"AppWorkshop" {
+		"appid" "221100"
+		"NeedsUpdate" "1"
+	}`
+	_ = os.WriteFile(filepath.Join(steamapps, "workshop", "appworkshop_221100.acf"), []byte(mockWS), 0644)
+
+	// Run downloads command against mock root
+	out, err := execute(t, "downloads", "--root", root)
+	if err != nil {
+		t.Fatalf("downloads command error: %v", err)
+	}
+
+	if !strings.Contains(out, "227300") || !strings.Contains(out, "Euro Truck Simulator 2") {
+		t.Errorf("expected 227300 in downloads output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "221100") || !strings.Contains(out, "Workshop") {
+		t.Errorf("expected workshop item in downloads output, got:\n%s", out)
+	}
+}
+
