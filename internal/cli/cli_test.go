@@ -663,6 +663,7 @@ func TestClientDefaultArgs(t *testing.T) {
 		t.Skip("shell script stand-in is POSIX-only")
 	}
 	cleanEnv(t)
+	t.Setenv("STEAM_CLIENT_PATH", "")
 	dir := t.TempDir()
 	log := filepath.Join(dir, "args.txt")
 	fake := filepath.Join(dir, "fakesteam")

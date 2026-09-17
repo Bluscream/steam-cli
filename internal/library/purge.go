@@ -230,23 +230,41 @@ func PurgeAppFiles(roots []string, appID string, installDirHint string, purgeNon
 		// Common install dir:
 		// If matchedInstallDir is known, add it
 		if matchedInstallDir != "" {
-			if _, err := os.Lstat(matchedInstallDir); err == nil {
-				candidateTargets = append(candidateTargets, PurgedArtifact{
-					Path:        matchedInstallDir,
-					Category:    "common",
-					Description: "Game installation directory",
-				})
+			if filepath.IsAbs(matchedInstallDir) {
+				if _, err := os.Lstat(matchedInstallDir); err == nil {
+					candidateTargets = append(candidateTargets, PurgedArtifact{
+						Path:        matchedInstallDir,
+						Category:    "common",
+						Description: "Game installation directory",
+					})
+				}
+			} else {
+				commonCandidate := filepath.Join(steamapps, "common", matchedInstallDir)
+				if _, err := os.Lstat(commonCandidate); err == nil {
+					candidateTargets = append(candidateTargets, PurgedArtifact{
+						Path:        commonCandidate,
+						Category:    "common",
+						Description: "Game installation directory (install dir)",
+					})
+				}
 			}
 		}
 
-		// If matchedName is known and no install dir yet, check common/<Name>
-		if matchedName != "" {
-			commonCandidate := filepath.Join(steamapps, "common", matchedName)
+		// If matchedName or installDirHint is known, check common/<Name> in this library
+		namesToCheck := []string{matchedName}
+		if installDirHint != "" && installDirHint != matchedName {
+			namesToCheck = append(namesToCheck, filepath.Base(installDirHint), installDirHint)
+		}
+		for _, name := range namesToCheck {
+			if name == "" {
+				continue
+			}
+			commonCandidate := filepath.Join(steamapps, "common", name)
 			if _, err := os.Lstat(commonCandidate); err == nil {
 				candidateTargets = append(candidateTargets, PurgedArtifact{
 					Path:        commonCandidate,
 					Category:    "common",
-					Description: "Game installation directory (matched name)",
+					Description: "Game installation directory (" + name + ")",
 				})
 			}
 		}

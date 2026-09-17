@@ -177,7 +177,7 @@ func newUninstallCommand(o *options, clientRun func(cmd *cobra.Command, args []s
 			"and application data in OS directories (~/.config, ~/.local/share, ~/Documents, Saved Games).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appIDInt, err := o.resolveAppID(cmd.Context(), args[0], cmd.ErrOrStderr())
+			appIDInt, resolvedName, err := o.resolveAppIDAndName(cmd.Context(), args[0], cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -209,9 +209,17 @@ func newUninstallCommand(o *options, clientRun func(cmd *cobra.Command, args []s
 				r = library.Defaults()
 			}
 
-			purgeRes, err := library.PurgeAppFiles(r, appID, installDirHint, purge)
+			hint := installDirHint
+			if hint == "" && resolvedName != "" {
+				hint = resolvedName
+			}
+
+			purgeRes, err := library.PurgeAppFiles(r, appID, hint, purge)
 			if err != nil {
 				return err
+			}
+			if purgeRes.Name == "" && resolvedName != "" {
+				purgeRes.Name = resolvedName
 			}
 			purgeRes.ClientNotified = clientNotified
 

@@ -76,26 +76,32 @@ func (o *options) searchStoreApps(ctx context.Context, query string) ([]StoreApp
 // If numeric, it returns the parsed integer. If not, it searches the Steam store,
 // returns the best matching AppID, and prints an informational notice to stderr.
 func (o *options) resolveAppID(ctx context.Context, in string, errOut io.Writer) (int, error) {
+	id, _, err := o.resolveAppIDAndName(ctx, in, errOut)
+	return id, err
+}
+
+// resolveAppIDAndName resolves an input string to both AppID and app name.
+func (o *options) resolveAppIDAndName(ctx context.Context, in string, errOut io.Writer) (int, string, error) {
 	s := strings.TrimSpace(in)
 	if s == "" {
-		return 0, errors.New("APPID or app name must not be empty")
+		return 0, "", errors.New("APPID or app name must not be empty")
 	}
 	if n, err := strconv.Atoi(s); err == nil && n > 0 {
-		return n, nil
+		return n, "", nil
 	}
 	// It's a name query, search Steam Store
 	apps, err := o.searchStoreApps(ctx, s)
 	if err != nil {
-		return 0, fmt.Errorf("resolving app %q: %w", s, err)
+		return 0, "", fmt.Errorf("resolving app %q: %w", s, err)
 	}
 	if len(apps) == 0 {
-		return 0, fmt.Errorf("no Steam app found matching %q", s)
+		return 0, "", fmt.Errorf("no Steam app found matching %q", s)
 	}
 	best := apps[0]
 	if errOut != nil {
 		fmt.Fprintf(errOut, "%s Resolved %q to %s (AppID %d)\n", yellow.Sprint("Notice:"), s, best.Name, best.ID)
 	}
-	return best.ID, nil
+	return best.ID, best.Name, nil
 }
 
 func appsCommand(o *options) *cobra.Command {
